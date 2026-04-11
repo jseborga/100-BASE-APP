@@ -1,0 +1,63 @@
+{
+  "preferences": {
+    "localAgentModeTrustedFolders": [
+      "C:\\Users\\jseborga\\OneDrive - SSA Ingenieria SRL\\00 JSP PERSONAL\\02 PROYECTOS\\08 ERP BOLIVIA",
+      "C:\\Users\\jseborga\\OneDrive - SSA Ingenieria SRL\\00 JSP PERSONAL\\02 PROYECTOS\\100 BASE APP"
+    ],
+    "coworkScheduledTasksEnabled": true,
+    "ccdScheduledTasksEnabled": true,
+    "sidebarMode": "task",
+    "coworkWebSearchEnabled": true
+  },
+  "mcpServers": {
+    "supabase": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@supabase/mcp-server-supabase",
+        "--supabase-url",
+        "YOUR_SUPABASE_URL",
+        "--supabase-service-role-key",
+        "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+      ]
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_PAT"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\jseborga\\OneDrive - SSA Ingenieria SRL\\00 JSP PERSONAL\\02 PROYECTOS\\100 BASE APP"
+      ]
+    },
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://YOUR_USER:YOUR_PASSWORD@YOUR_HOST:5432/YOUR_DATABASE"
+      ]
+    },
+    "easypanel": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "easypanel-mcp@latest"
+      ],
+      "env": {
+        "EASYPANEL_URL": "YOUR_EASYPANEL_URL",
+        "EASYPANEL_EMAIL": "YOUR_EASYPANEL_EMAIL",
+        "EASYPANEL_PASSWORD": "YOUR_EASYPANEL_PASSWORD"
+      }
+    }
+  }
+}
