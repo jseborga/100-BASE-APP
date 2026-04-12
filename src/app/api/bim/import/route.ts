@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { bimImportSchema } from '@/lib/schemas'
-import type { TablesInsert } from '@/types/database'
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,25 +19,24 @@ export async function POST(request: NextRequest) {
     }
 
     // Create BIM import record
-    const importPayload: TablesInsert<'bim_importaciones'> = {
-      proyecto_id: validatedData.proyecto_id,
-      archivo_nombre: 'imported_from_revit',
-      total_elementos: validatedData.elementos.length,
-      elementos_mapeados: 0,
-      estado: 'procesando',
-      importado_por: user.id,
-    }
-
+    // Note: explicit cast needed because Supabase RLS type inference resolves insert to 'never'
     const { data: importData, error: importError } = await supabase
       .from('bim_importaciones')
-      .insert(importPayload)
+      .insert({
+        proyecto_id: validatedData.proyecto_id,
+        archivo_nombre: 'imported_from_revit',
+        total_elementos: validatedData.elementos.length,
+        elementos_mapeados: 0,
+        estado: 'procesando',
+        importado_por: user.id,
+      } as never)
       .select()
       .single()
 
     if (importError) throw importError
 
     // Create BIM elements
-    const elementos: TablesInsert<'bim_elementos'>[] = validatedData.elementos.map((el) => ({
+    const elementos = validatedData.elementos.map((el) => ({
       importacion_id: importData.id,
       revit_id: el.revit_id || null,
       familia: el.familia,
@@ -55,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     const { error: elementosError } = await supabase
       .from('bim_elementos')
-      .insert(elementos)
+      .insert(elementos as never[])
 
     if (elementosError) throw elementosError
 
