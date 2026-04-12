@@ -15,6 +15,11 @@ interface Pais {
   nombre: string
 }
 
+interface OrgMiembro {
+  org_id: string
+  organizaciones: { id: string; nombre: string } | null
+}
+
 interface Proyecto {
   id: string
   nombre: string
@@ -23,6 +28,7 @@ interface Proyecto {
   ubicacion: string | null
   estado: string | null
   pais_id: string
+  org_id: string | null
   paises: Pais | null
   created_at: string | null
   _count_partidas?: number
@@ -55,6 +61,8 @@ export default function ProyectosPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [userOrgId, setUserOrgId] = useState<string | null>(null)
 
   const [form, setForm] = useState({
     nombre: '',
@@ -71,15 +79,25 @@ export default function ProyectosPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
+      // Get user's org
+      const { data: orgData } = await supabase
+        .from('org_miembros')
+        .select('org_id, organizaciones(id, nombre)')
+        .eq('user_id', user.id)
+        .limit(1)
+
+      const orgRows = (orgData ?? []) as unknown as OrgMiembro[]
+      if (orgRows.length > 0) {
+        setUserOrgId(orgRows[0].org_id)
+      }
+
       const { data, error } = await supabase
         .from('proyectos')
         .select('*, paises(id, codigo, nombre)')
-        .eq('propietario_id', user.id)
         .order('created_at', { ascending: false })
 
       if (error) throw error
 
-      // Cast: supabase-js type inference resolves to 'never' for join queries
       const rows = (data ?? []) as unknown as Proyecto[]
       const projectIds = rows.map(p => p.id)
       const counts: Record<string, number> = {}
@@ -89,7 +107,6 @@ export default function ProyectosPage() {
           .select('proyecto_id')
           .in('proyecto_id', projectIds)
 
-        // Cast: supabase-js type inference may resolve to 'never'
         const countRows = (countData ?? []) as unknown as { proyecto_id: string }[]
         countRows.forEach(row => {
           counts[row.proyecto_id] = (counts[row.proyecto_id] || 0) + 1
@@ -110,7 +127,6 @@ export default function ProyectosPage() {
 
   const fetchPaises = useCallback(async () => {
     const { data } = await supabase.from('paises').select('id, codigo, nombre').order('nombre')
-    // Cast: supabase-js type inference may resolve to 'never'
     setPaises((data ?? []) as unknown as Pais[])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -124,6 +140,7 @@ export default function ProyectosPage() {
     setForm({ nombre: '', descripcion: '', pais_id: '', tipologia: '', ubicacion: '' })
     setEditingId(null)
     setShowForm(false)
+    setFormError(null)
   }
 
   const openEdit = (p: Proyecto) => {
@@ -136,15 +153,24 @@ export default function ProyectosPage() {
     })
     setEditingId(p.id)
     setShowForm(true)
+    setFormError(null)
   }
 
   const handleSave = async () => {
-    if (!form.nombre.trim() || !form.pais_id) return
+    if (!form.nombre.trim() || !form.pais_id) {
+      setFormError('El nombre y el pa\u00eds son obligatorios')
+      return
+    }
     setSaving(true)
+    setFormError(null)
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!user) {
+        setFormError('No hay sesi\u00f3n activa. Vuelve a iniciar sesi\u00f3n.')
+        setSaving(false)
+        return
+      }
 
       const payload = {
         nombre: form.nombre.trim(),
@@ -161,16 +187,28 @@ export default function ProyectosPage() {
           .eq('id', editingId)
         if (error) throw error
       } else {
+        const insertPayload = {
+          ...payload,
+          propietario_id: user.id,
+          estado: 'activo',
+          org_id: userOrgId,
+        }
         const { error } = await supabase
           .from('proyectos')
-          .insert({ ...payload, propietario_id: user.id, estado: 'activo' } as never)
+          .insert(insertPayload as never)
         if (error) throw error
       }
 
       resetForm()
       await fetchProyectos()
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error saving proyecto:', error)
+      const msg = error instanceof Error ? error.message : String(error)
+      if (msg.includes('row-level security')) {
+        setFormError('Error de permisos. Verifica que tu sesi\u00f3n est\u00e9 activa.')
+      } else {
+        setFormError(`Error al guardar: ${msg}`)
+      }
     } finally {
       setSaving(false)
     }
@@ -232,6 +270,14 @@ export default function ProyectosPage() {
                 <X className="w-4 h-4" />
               </Button>
             </div>
+
+            {/* Error message */}
+            {formError && (
+              <div className="mb-4 p-3 rounded-lg bg-red-50 text-red-800 border border-red-200 text-sm">
+                {formError}
+              </div>
+            )}
+
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
