@@ -80,10 +80,16 @@ Proyecto "base-app"          ← este repo
 - `04_tags.sql` — 70 tags en 7 dimensiones
 - `05_partidas_bo.sql` — 111 partidas Bolivia (Edificio Multifamiliar)
 - `06_partida_tags_bo.sql` — 707 relaciones partida↔tag
+- `07_partida_localizaciones_bo.sql` — 111 localizaciones NB (Bolivia)
+- `08_revit_categorias.sql` — 12 categorías Revit 2025
+- `09_revit_mapeos.sql` — mapeos categoría Revit → partida
+- `10_divisiones_pe.sql` — 17 divisiones de presupuesto RNE (Perú)
+- `11_partida_localizaciones_pe.sql` — 111 localizaciones RNE (Perú)
+- `12_partida_tags_pe.sql` — tags PE para las 111 partidas compartidas
 
 ### Estado de seeds por país:
-- ✅ Bolivia — completo (16 capítulos, 111 partidas)
-- 🔄 Perú — pendiente (70% de partidas reutilizables, cambia localización)
+- ✅ Bolivia — completo (16 capítulos, 111 partidas, 707 tags)
+- ✅ Perú — completo (17 divisiones, 111 localizaciones RNE, tags PE)
 - ⏳ Brasil, Argentina, Chile, EEUU — pendiente
 
 ---
@@ -180,40 +186,38 @@ Fórmulas ejemplo:
 ├── tailwind.config.ts
 ├── tsconfig.json
 ├── db/
-│   ├── schema.sql               ← CREATE TABLE completo (15 tablas, ejecutado)
-│   ├── seeds/
-│   │   ├── 01_paises.sql        ← 11 países (ejecutado)
-│   │   ├── 02_estandares.sql    ← 6 estándares (ejecutado)
-│   │   ├── 03_divisiones.sql    ← 47 divisiones (ejecutado)
-│   │   ├── 04_tags.sql          ← 70 tags (ejecutado)
-│   │   ├── 05_partidas_bo.sql   ← 111 partidas Bolivia (ejecutado)
-│   │   └── 06_partida_tags_bo.sql ← 707 relaciones (ejecutado)
-│   └── migrations/              ← cambios futuros al schema
+│   ├── schema.sql               ← CREATE TABLE completo (15 tablas)
+│   ├── seeds/                   ← 12 seeds (BO + PE completos)
+│   │   ├── 01-06               ← Bolivia: países, estándares, divisiones, tags, partidas
+│   │   ├── 07-09               ← Localizaciones BO, Revit categorías, mapeos
+│   │   └── 10-12               ← Peru: divisiones RNE, localizaciones, tags PE
+│   └── migrations/              ← cambios al schema (004_provider_models)
 ├── src/
 │   ├── app/
 │   │   ├── page.tsx             ← redirect('/dashboard')
-│   │   ├── layout.tsx           ← root layout (globals.css, fonts)
-│   │   ├── dashboard/           ← rutas protegidas (layout con sidebar + auth)
-│   │   │   ├── layout.tsx       ← sidebar + topbar + auth check
-│   │   │   ├── page.tsx         ← panel de control con stats
-│   │   │   ├── proyectos/       ← lista + detalle [id]
-│   │   │   ├── catalogo/        ← browser de partidas con búsqueda
-│   │   │   └── configuracion/   ← settings de empresa
-│   │   ├── (dashboard)/         ← DEPRECADO, redirigen a /dashboard/
+│   │   ├── layout.tsx           ← root layout
+│   │   ├── dashboard/
+│   │   │   ├── proyectos/       ← CRUD + detalle [id] con metrados inline
+│   │   │   ├── catalogo/        ← browser partidas, filtros, import a proyecto
+│   │   │   ├── agentes/         ← chat IA full-height + sidebar agentes
+│   │   │   └── configuracion/   ← API keys, modelos, config agentes
 │   │   ├── (auth)/login/        ← login con Supabase Auth
 │   │   └── api/
-│   │       ├── bim/import/      ← POST: recibe payload del Add-in Revit
+│   │       ├── agentes/[agente] ← POST: streaming SSE
+│   │       ├── proyectos/       ← CRUD + [id]/partidas (import, patch, delete)
+│   │       ├── config/          ← agentes, llm (keys, models, provider-models)
 │   │       └── health/          ← GET: healthcheck
 │   ├── components/
 │   │   ├── layout/              ← sidebar.tsx, topbar.tsx
-│   │   └── ui/                  ← shadcn: button, card, input, label, badge
-│   ├── types/
-│   │   └── database.ts          ← tipos generados de Supabase (15 tablas, Row/Insert/Update)
+│   │   ├── agentes/             ← chat-agente.tsx (markdown, streaming)
+│   │   └── ui/                  ← shadcn components
 │   └── lib/
-│       ├── supabase/            ← client.ts, server.ts, middleware.ts
-│       ├── schemas/             ← Zod: login, proyecto, bimImport, partidaSugerencia
-│       └── utils.ts             ← cn() helper para tailwind
-├── middleware.ts                 ← auth redirect: /dashboard ↔ /login
+│       ├── supabase/            ← client.ts, server.ts
+│       ├── anthropic/           ← agents.ts (registry, prompts)
+│       ├── llm/                 ← providers.ts, streamLLM multi-provider
+│       ├── schemas/             ← Zod validaciones
+│       └── utils.ts             ← cn() helper
+├── middleware.ts                 ← auth redirect
 └── README.md
 ```
 
@@ -234,14 +238,29 @@ Fórmulas ejemplo:
 [x] 9. Generar tipos TypeScript de Supabase (database.ts con 15 tablas)
 ```
 
+### Completado (fase 2)
+```
+[x] 10. Implementar agentes IA — 6 agentes con streaming SSE, config por usuario
+[x] 11. CRUD completo de proyectos — crear, editar, eliminar, cambiar estado
+[x] 12. Catálogo master con filtros por estándar/país, import a proyecto
+[x] 13. Agregar partidas Perú — seeds RNE (111 localizaciones + divisiones + tags)
+[x] 14. Chat de agentes — full-height layout, markdown rendering, sidebar agentes
+[x] 15. Configuración — API keys, modelos editables, config por agente
+[x] 16. Detalle proyecto — metrado inline, quitar partidas, agrupado por capítulo
+```
+
+### Completado (fase 3)
+```
+[x] 17. Desactivar ignoreBuildErrors — ya está en false, 0 errores TypeScript
+[x] 18. Exportar planilla (Excel, JSON) desde proyecto — ExcelJS, API /export
+[x] 19. Dashboard con estadísticas reales — proyectos, catálogo, asignaciones, BIM
+```
+
 ### Pendiente (orden)
 ```
-[ ] 10. Desactivar ignoreBuildErrors (migrar pages a tipos Database)
-[ ] 11. Implementar CRUD completo de proyectos (crear, editar, eliminar)
-[ ] 12. Implementar agentes IA (empezar por Normativa y Metrados)
-[ ] 13. Agregar partidas Perú (reutilizar catálogo BO)
-[ ] 14. Conectar n8n para exportación a Odoo
-[ ] 15. Implementar modo importación Excel
+[ ] 20. Conectar n8n para exportación a Odoo
+[ ] 21. Implementar modo importación Excel
+[ ] 22. Agregar partidas Brasil (ABNT localizaciones)
 ```
 
 ---

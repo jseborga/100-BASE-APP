@@ -1,11 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Upload, ArrowLeft, MapPin, Building2, Calendar, Bot, FileSpreadsheet } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import {
+  ArrowLeft, MapPin, Building2, Calendar, Bot, FileSpreadsheet,
+  Upload, Trash2, Check, X, Pencil, Plus, ChevronDown, ChevronRight, Download,
+  LayoutTemplate, Loader2,
+} from 'lucide-react'
 import Link from 'next/link'
 
 interface Pais {
@@ -14,20 +19,28 @@ interface Pais {
   nombre: string
 }
 
+interface PartidaLocalizacion {
+  codigo_local: string
+  referencia_norma: string | null
+  estandar_id: string
+}
+
 interface PartidaInfo {
   id: string
   nombre: string
   unidad: string
   capitulo: string | null
+  partida_localizaciones?: PartidaLocalizacion[]
 }
 
 interface PartidaProyecto {
   id: string
   partida_id: string
-  metrado: number
-  metrado_origen: string | null
-  capitulo: string | null
-  estado: string | null
+  metrado_manual: number | null
+  metrado_bim: number | null
+  metrado_final: number | null
+  cantidad: number
+  notas: string | null
   orden: number | null
   partidas: PartidaInfo | null
 }
@@ -60,39 +73,190 @@ export default function ProyectoDetailPage() {
   const [proyecto, setProyecto] = useState<ProyectoDetail | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [editingPartida, setEditingPartida] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const [savingPartida, setSavingPartida] = useState<string | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [changingEstado, setChangingEstado] = useState(false)
+  const [collapsedChapters, setCollapsedChapters] = useState<Set<string>>(new Set())
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [addForm, setAddForm] = useState({ nombre: '', unidad: 'm2', capitulo: '' })
+  const [addingSaving, setAddingSaving] = useState(false)
+  const [plantillaLoading, setPlantillaLoading] = useState(false)
+  const [plantillaPreview, setPlantillaPreview] = useState<{ nuevas: number; ya_en_proyecto: number } | null>(null)
+  const [plantillaError, setPlantillaError] = useState<string | null>(null)
+
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}`)
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Error al cargar el proyecto')
+      }
+      const data = await res.json()
+      setProyecto(data as ProyectoDetail)
+    } catch (err) {
+      console.error('Error fetching proyecto:', err)
+      setError(err instanceof Error ? err.message : 'Error al cargar el proyecto')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [proyectoId])
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const res = await fetch(`/api/proyectos/${proyectoId}`)
-        if (!res.ok) {
-          const err = await res.json()
-          throw new Error(err.error || 'Error al cargar el proyecto')
-        }
-        const data = await res.json()
-        setProyecto(data as ProyectoDetail)
-      } catch (err) {
-        console.error('Error fetching proyecto:', err)
-        setError(err instanceof Error ? err.message : 'Error al cargar el proyecto')
-      } finally {
-        setIsLoading(false)
-      }
-    }
-
     if (proyectoId) fetchData()
-  }, [proyectoId])
+  }, [proyectoId, fetchData])
+
+  const handleUpdateMetrado = async (ppId: string) => {
+    const value = parseFloat(editValue)
+    if (isNaN(value) || value < 0) return
+
+    setSavingPartida(ppId)
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/partidas`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proyecto_partida_id: ppId,
+          metrado_manual: value,
+          metrado_final: value,
+        }),
+      })
+      if (!res.ok) throw new Error('Error al actualizar')
+      setEditingPartida(null)
+      await fetchData()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setSavingPartida(null)
+    }
+  }
+
+  const handleRemovePartida = async (ppId: string) => {
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/partidas`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proyecto_partida_id: ppId }),
+      })
+      if (!res.ok) throw new Error('Error al eliminar')
+      setDeleteConfirm(null)
+      await fetchData()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleEstadoChange = async (newEstado: string) => {
+    setChangingEstado(true)
+    try {
+      const res = await fetch('/api/proyectos', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: proyectoId, estado: newEstado }),
+      })
+      if (!res.ok) throw new Error('Error al cambiar estado')
+      await fetchData()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setChangingEstado(false)
+    }
+  }
+
+  const toggleChapter = (chapter: string) => {
+    setCollapsedChapters(prev => {
+      const next = new Set(prev)
+      if (next.has(chapter)) next.delete(chapter)
+      else next.add(chapter)
+      return next
+    })
+  }
 
   const formatDate = (date: string | null) => {
     if (!date) return ''
     return new Date(date).toLocaleDateString('es-BO', {
-      day: '2-digit', month: 'short', year: 'numeric'
+      day: '2-digit', month: 'short', year: 'numeric',
     })
+  }
+
+  const getMetrado = (p: PartidaProyecto) => {
+    return p.metrado_final ?? p.metrado_manual ?? p.metrado_bim ?? 0
+  }
+
+  const handleExport = (format: 'excel' | 'json') => {
+    window.open(`/api/proyectos/${proyectoId}/export?format=${format}`, '_blank')
+  }
+
+  const handleAddPartida = async () => {
+    if (!addForm.nombre.trim() || !addForm.unidad) return
+    setAddingSaving(true)
+    try {
+      const res = await fetch('/api/partidas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nombre: addForm.nombre.trim(),
+          unidad: addForm.unidad,
+          capitulo: addForm.capitulo || undefined,
+          proyecto_id: proyectoId,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Error al crear')
+      }
+      setAddForm({ nombre: '', unidad: 'm2', capitulo: '' })
+      setShowAddForm(false)
+      await fetchData()
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setAddingSaving(false)
+    }
+  }
+
+  const handlePlantillaPreview = async () => {
+    setPlantillaError(null)
+    setPlantillaLoading(true)
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/plantilla`)
+      const data = await res.json()
+      if (!res.ok) {
+        setPlantillaError(data.error || 'Error al consultar plantilla')
+        return
+      }
+      setPlantillaPreview(data)
+    } catch {
+      setPlantillaError('Error de conexión')
+    } finally {
+      setPlantillaLoading(false)
+    }
+  }
+
+  const handlePlantillaLoad = async () => {
+    setPlantillaLoading(true)
+    setPlantillaError(null)
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/plantilla`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        setPlantillaError(data.error || 'Error al cargar plantilla')
+        return
+      }
+      setPlantillaPreview(null)
+      await fetchData()
+    } catch {
+      setPlantillaError('Error de conexión')
+    } finally {
+      setPlantillaLoading(false)
+    }
   }
 
   if (isLoading) {
     return (
       <div className="p-8 flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     )
   }
@@ -116,6 +280,16 @@ export default function ProyectoDetailPage() {
   const estado = ESTADOS[proyecto.estado || 'activo'] || ESTADOS.activo
   const partidas = proyecto.partidas || []
 
+  // Group partidas by capitulo
+  const grouped: Record<string, PartidaProyecto[]> = {}
+  partidas.forEach(p => {
+    const chapter = p.partidas?.capitulo || 'Sin capítulo'
+    if (!grouped[chapter]) grouped[chapter] = []
+    grouped[chapter].push(p)
+  })
+
+  const totalMetrado = partidas.reduce((sum, p) => sum + getMetrado(p), 0)
+
   return (
     <div className="p-8 space-y-6">
       {/* Back button */}
@@ -125,11 +299,19 @@ export default function ProyectoDetailPage() {
 
       {/* Project header */}
       <div className="space-y-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-3xl font-bold">{proyecto.nombre}</h1>
-          <span className={'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ' + estado.color}>
-            {estado.label}
-          </span>
+          {/* Estado selector */}
+          <select
+            value={proyecto.estado || 'activo'}
+            onChange={e => handleEstadoChange(e.target.value)}
+            disabled={changingEstado}
+            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border-0 cursor-pointer ${estado.color}`}
+          >
+            {Object.entries(ESTADOS).map(([key, val]) => (
+              <option key={key} value={key}>{val.label}</option>
+            ))}
+          </select>
         </div>
         {proyecto.descripcion && (
           <p className="text-muted-foreground">{proyecto.descripcion}</p>
@@ -139,7 +321,7 @@ export default function ProyectoDetailPage() {
             <span className="flex items-center gap-1">
               <MapPin className="w-4 h-4" />
               {proyecto.paises.nombre}
-              {proyecto.ubicacion ? ' \u00B7 ' + proyecto.ubicacion : ''}
+              {proyecto.ubicacion ? ` · ${proyecto.ubicacion}` : ''}
             </span>
           )}
           {proyecto.tipologia && (
@@ -155,88 +337,417 @@ export default function ProyectoDetailPage() {
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="hover:border-primary/40 transition-all cursor-pointer">
-          <Link href={'/dashboard/agentes'}>
-            <CardContent className="py-6 flex items-center gap-4">
-              <div className="p-3 rounded-lg bg-violet-100">
-                <Bot className="w-6 h-6 text-violet-700" />
+      {/* Quick actions */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Link href={`/dashboard/catalogo?proyecto=${proyectoId}`}>
+          <Card className="hover:border-primary/40 transition-all cursor-pointer h-full">
+            <CardContent className="py-5 flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-green-100">
+                <Plus className="w-5 h-5 text-green-700" />
               </div>
               <div>
-                <h3 className="font-semibold">Consultar agentes IA</h3>
-                <p className="text-sm text-muted-foreground">Normativa, metrados, presupuesto</p>
+                <h3 className="font-semibold text-sm">Agregar partidas</h3>
+                <p className="text-xs text-muted-foreground">Desde catálogo</p>
               </div>
             </CardContent>
-          </Link>
-        </Card>
+          </Card>
+        </Link>
 
-        <Card className="hover:border-primary/40 transition-all cursor-pointer">
-          <CardContent className="py-6 flex items-center gap-4">
-            <div className="p-3 rounded-lg bg-blue-100">
-              <Upload className="w-6 h-6 text-blue-700" />
-            </div>
-            <div>
-              <h3 className="font-semibold">Importar desde BIM</h3>
-              <p className="text-sm text-muted-foreground">Revit 2025 Add-in</p>
-            </div>
-          </CardContent>
-        </Card>
+        <Link href="/dashboard/agentes">
+          <Card className="hover:border-primary/40 transition-all cursor-pointer h-full">
+            <CardContent className="py-5 flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-violet-100">
+                <Bot className="w-5 h-5 text-violet-700" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm">Consultar agentes IA</h3>
+                <p className="text-xs text-muted-foreground">Normativa, metrados</p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card className="hover:border-primary/40 transition-all cursor-pointer">
-          <CardContent className="py-6 flex items-center gap-4">
-            <div className="p-3 rounded-lg bg-emerald-100">
-              <FileSpreadsheet className="w-6 h-6 text-emerald-700" />
+        {proyecto.tipologia && proyecto.tipologia !== 'Otro' ? (
+          <Card
+            className="hover:border-primary/40 transition-all cursor-pointer h-full"
+            onClick={plantillaLoading ? undefined : handlePlantillaPreview}
+          >
+            <CardContent className="py-5 flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-orange-100">
+                {plantillaLoading ? (
+                  <Loader2 className="w-5 h-5 text-orange-700 animate-spin" />
+                ) : (
+                  <LayoutTemplate className="w-5 h-5 text-orange-700" />
+                )}
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm">Cargar plantilla</h3>
+                <p className="text-xs text-muted-foreground">{proyecto.tipologia}</p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="hover:border-primary/40 transition-all cursor-pointer h-full">
+            <CardContent className="py-5 flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-blue-100">
+                <Upload className="w-5 h-5 text-blue-700" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm">Importar BIM</h3>
+                <p className="text-xs text-muted-foreground">Revit 2025</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card className="h-full">
+          <CardContent className="py-5 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-emerald-100">
+                <FileSpreadsheet className="w-5 h-5 text-emerald-700" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm">Exportar planilla</h3>
+                <p className="text-xs text-muted-foreground">{partidas.length} partidas</p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold">Exportar planilla</h3>
-              <p className="text-sm text-muted-foreground">Excel, JSON, Odoo</p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 gap-1.5 text-xs"
+                onClick={() => handleExport('excel')}
+                disabled={partidas.length === 0}
+              >
+                <Download className="w-3.5 h-3.5" />
+                Excel
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 gap-1.5 text-xs"
+                onClick={() => handleExport('json')}
+                disabled={partidas.length === 0}
+              >
+                <Download className="w-3.5 h-3.5" />
+                JSON
+              </Button>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Partidas Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Partidas del proyecto</CardTitle>
-          <CardDescription>
-            {partidas.length} partida{partidas.length !== 1 ? 's' : ''} asignada{partidas.length !== 1 ? 's' : ''}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {partidas.length === 0 ? (
-            <div className="text-center py-8 space-y-3">
-              <p className="text-sm text-muted-foreground">
-                No hay partidas asignadas a este proyecto.
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Importa desde BIM, consulta los agentes IA o agrega partidas manualmente desde el catalogo.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {partidas.map((p) => (
-                <div key={p.id} className="flex justify-between items-center p-3 border rounded-lg">
-                  <div className="space-y-1">
-                    <span className="text-sm font-medium">
-                      {p.partidas?.nombre || `Partida ${p.partida_id.slice(0, 8)}`}
-                    </span>
-                    {(p.partidas?.capitulo || p.capitulo) && (
-                      <p className="text-xs text-muted-foreground">{p.partidas?.capitulo || p.capitulo}</p>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-semibold">{p.metrado}</span>
-                    {p.partidas?.unidad && (
-                      <span className="text-xs text-muted-foreground ml-1">{p.partidas.unidad}</span>
-                    )}
-                    {p.metrado_origen && (
+      {/* Plantilla preview */}
+      {(plantillaPreview || plantillaError) && (
+        <Card className="border-orange-200 bg-orange-50/50">
+          <CardContent className="py-4">
+            {plantillaError ? (
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-destructive">{plantillaError}</p>
+                <Button variant="ghost" size="sm" onClick={() => { setPlantillaError(null); setPlantillaPreview(null) }}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            ) : plantillaPreview && plantillaPreview.nuevas > 0 ? (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <LayoutTemplate className="w-5 h-5 text-orange-600" />
+                  <div>
+                    <p className="text-sm font-medium">
+                      Plantilla &ldquo;{proyecto.tipologia}&rdquo;: {plantillaPreview.nuevas} partidas nuevas disponibles
+                    </p>
+                    {plantillaPreview.ya_en_proyecto > 0 && (
                       <p className="text-xs text-muted-foreground">
-                        <Badge variant="outline" className="text-[10px]">{p.metrado_origen}</Badge>
+                        {plantillaPreview.ya_en_proyecto} ya están en el proyecto
                       </p>
                     )}
                   </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => { setPlantillaPreview(null); setPlantillaError(null) }}>
+                    Cancelar
+                  </Button>
+                  <Button size="sm" onClick={handlePlantillaLoad} disabled={plantillaLoading} className="gap-1.5">
+                    {plantillaLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    Cargar {plantillaPreview.nuevas} partidas
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Todas las partidas de la plantilla ya están en el proyecto.
+                </p>
+                <Button variant="ghost" size="sm" onClick={() => setPlantillaPreview(null)}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Partidas Section */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Partidas del proyecto</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                {partidas.length} partida{partidas.length !== 1 ? 's' : ''} · Metrado total: {totalMetrado.toFixed(2)}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setShowAddForm(!showAddForm)}>
+                <Pencil className="w-3.5 h-3.5" />
+                Manual
+              </Button>
+              <Link href={`/dashboard/catalogo?proyecto=${proyectoId}`}>
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <Plus className="w-3.5 h-3.5" />
+                  Catalogo
+                </Button>
+              </Link>
+            </div>
+          </div>
+
+          {/* Manual add form */}
+          {showAddForm && (
+            <div className="mt-3 p-4 border rounded-lg bg-muted/30 space-y-3">
+              <p className="text-sm font-medium">Agregar partida manual</p>
+              <div className="grid grid-cols-[1fr_100px_1fr] gap-3">
+                <Input
+                  placeholder="Nombre de la partida"
+                  value={addForm.nombre}
+                  onChange={e => setAddForm({ ...addForm, nombre: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddPartida() }}
+                  className="h-9 text-sm"
+                />
+                <select
+                  value={addForm.unidad}
+                  onChange={e => setAddForm({ ...addForm, unidad: e.target.value })}
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  {['m2', 'm3', 'ml', 'kg', 'pza', 'glb', 'm', 'und', 'lt', 'pto'].map(u => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
+                <Input
+                  placeholder="Capitulo (opcional)"
+                  value={addForm.capitulo}
+                  onChange={e => setAddForm({ ...addForm, capitulo: e.target.value })}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={handleAddPartida} disabled={addingSaving || !addForm.nombre.trim()}>
+                  {addingSaving ? 'Guardando...' : 'Agregar al proyecto'}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>Cancelar</Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                La partida se crea en el catalogo master y se agrega a este proyecto automaticamente.
+              </p>
+            </div>
+          )}
+        </CardHeader>
+        <CardContent>
+          {partidas.length === 0 ? (
+            <div className="text-center py-12 space-y-4">
+              <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto">
+                <LayoutTemplate className="w-6 h-6 text-muted-foreground" />
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium">No hay partidas asignadas</p>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  {proyecto.tipologia && proyecto.tipologia !== 'Otro'
+                    ? `Carga la plantilla predefinida para "${proyecto.tipologia}" o agrega partidas manualmente.`
+                    : 'Agrega partidas desde el catálogo, importa desde Revit o consulta los agentes IA para sugerencias.'}
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-3">
+                {proyecto.tipologia && proyecto.tipologia !== 'Otro' && (
+                  <Button
+                    className="gap-2"
+                    onClick={handlePlantillaPreview}
+                    disabled={plantillaLoading}
+                  >
+                    {plantillaLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <LayoutTemplate className="w-4 h-4" />
+                    )}
+                    Cargar plantilla
+                  </Button>
+                )}
+                <Link href={`/dashboard/catalogo?proyecto=${proyectoId}`}>
+                  <Button variant={proyecto.tipologia && proyecto.tipologia !== 'Otro' ? 'outline' : 'default'} className="gap-2">
+                    <Plus className="w-4 h-4" />
+                    Agregar desde catálogo
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {/* Table header */}
+              <div className="grid grid-cols-[60px_1fr_100px_80px_60px_40px] gap-2 px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider border-b">
+                <span>Codigo</span>
+                <span>Partida</span>
+                <span className="text-right">Metrado</span>
+                <span className="text-center">Unidad</span>
+                <span className="text-center">Origen</span>
+                <span></span>
+              </div>
+
+              {Object.entries(grouped).map(([chapter, items]) => (
+                <div key={chapter}>
+                  {/* Chapter header */}
+                  <button
+                    onClick={() => toggleChapter(chapter)}
+                    className="w-full flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg hover:bg-muted transition-colors text-left"
+                  >
+                    {collapsedChapters.has(chapter)
+                      ? <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      : <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    }
+                    <span className="text-sm font-semibold">{chapter}</span>
+                    <Badge variant="secondary" className="text-[10px] ml-auto">
+                      {items.length}
+                    </Badge>
+                  </button>
+
+                  {/* Chapter items */}
+                  {!collapsedChapters.has(chapter) && (
+                    <div className="space-y-0.5 mt-0.5">
+                      {items.map(p => {
+                        const metrado = getMetrado(p)
+                        const isEditing = editingPartida === p.id
+                        const isSaving = savingPartida === p.id
+                        const isDeleting = deleteConfirm === p.id
+                        const origen = p.metrado_bim != null ? 'BIM' : p.metrado_manual != null ? 'Manual' : '—'
+                        const codigoLocal = p.partidas?.partida_localizaciones?.[0]?.codigo_local || ''
+
+                        return (
+                          <div key={p.id} className="group grid grid-cols-[60px_1fr_100px_80px_60px_40px] gap-2 items-center px-3 py-2 rounded-lg hover:bg-muted/30 transition-colors">
+                            {/* Codigo */}
+                            <span className="text-xs font-mono font-bold text-blue-600">
+                              {codigoLocal || '—'}
+                            </span>
+
+                            {/* Name */}
+                            <div className="min-w-0">
+                              <p className="text-sm truncate">
+                                {p.partidas?.nombre || `Partida ${p.partida_id.slice(0, 8)}`}
+                              </p>
+                              {p.notas && (
+                                <p className="text-[11px] text-muted-foreground truncate">{p.notas}</p>
+                              )}
+                            </div>
+
+                            {/* Metrado */}
+                            <div className="text-right">
+                              {isEditing ? (
+                                <div className="flex items-center gap-1 justify-end">
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={editValue}
+                                    onChange={e => setEditValue(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleUpdateMetrado(p.id)
+                                      if (e.key === 'Escape') setEditingPartida(null)
+                                    }}
+                                    className="h-7 w-20 text-xs text-right"
+                                    autoFocus
+                                    disabled={isSaving}
+                                  />
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => handleUpdateMetrado(p.id)}
+                                    disabled={isSaving}
+                                  >
+                                    <Check className="w-3 h-3 text-green-600" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => setEditingPartida(null)}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    setEditingPartida(p.id)
+                                    setEditValue(metrado.toString())
+                                  }}
+                                  className="text-sm font-medium hover:text-primary transition-colors inline-flex items-center gap-1"
+                                  title="Editar metrado"
+                                >
+                                  {metrado > 0 ? metrado.toFixed(2) : '—'}
+                                  <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50" />
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Unidad */}
+                            <span className="text-xs text-center text-muted-foreground">
+                              {p.partidas?.unidad || '—'}
+                            </span>
+
+                            {/* Origen */}
+                            <span className="text-center">
+                              {origen !== '—' ? (
+                                <Badge variant="outline" className="text-[10px]">{origen}</Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </span>
+
+                            {/* Actions */}
+                            <div className="flex justify-end">
+                              {isDeleting ? (
+                                <div className="flex items-center gap-0.5">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => handleRemovePartida(p.id)}
+                                  >
+                                    <Check className="w-3 h-3 text-destructive" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => setDeleteConfirm(null)}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-destructive"
+                                  onClick={() => setDeleteConfirm(p.id)}
+                                  title="Quitar del proyecto"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

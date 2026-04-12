@@ -82,16 +82,42 @@ export async function POST(request: NextRequest) {
     const validated = upsertSchema.parse(body)
 
     const admin = getAdmin()
-    const { error } = await admin
+
+    // Try upsert first
+    const { error: upsertError } = await admin
       .from('agent_config')
       .upsert({
         user_id: user.id,
         agent_slug: validated.agent_slug,
         provider: validated.provider,
         model: validated.model,
+        updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id,agent_slug' })
 
-    if (error) throw error
+    if (upsertError) {
+      console.error('Agent config upsert failed, trying delete+insert:', upsertError)
+
+      // Fallback: delete existing + insert new
+      await admin
+        .from('agent_config')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('agent_slug', validated.agent_slug)
+
+      const { error: insertError } = await admin
+        .from('agent_config')
+        .insert({
+          user_id: user.id,
+          agent_slug: validated.agent_slug,
+          provider: validated.provider,
+          model: validated.model,
+        })
+
+      if (insertError) {
+        console.error('Agent config insert also failed:', insertError)
+        throw insertError
+      }
+    }
 
     return Response.json({ ok: true })
   } catch (error: unknown) {

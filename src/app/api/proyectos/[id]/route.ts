@@ -72,10 +72,10 @@ export async function GET(
       return NextResponse.json({ error: 'No tienes acceso a este proyecto' }, { status: 403 })
     }
 
-    // Fetch project partidas with partida info
+    // Fetch project partidas with partida info + localizaciones
     const { data: partidas } = await adminClient
       .from('proyecto_partidas')
-      .select('*, partidas(id, nombre, unidad, capitulo)')
+      .select('*, partidas(id, nombre, unidad, capitulo, partida_localizaciones(codigo_local, referencia_norma, estandar_id))')
       .eq('proyecto_id', id)
       .order('orden', { ascending: true })
 

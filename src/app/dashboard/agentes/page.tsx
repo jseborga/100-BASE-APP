@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { ChatAgente } from '@/components/agentes/chat-agente'
-import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Bot, Brain, Scale, Calculator, Layers, DollarSign, Box } from 'lucide-react'
+import {
+  Bot, Brain, Scale, Calculator, Layers, DollarSign, Box,
+  MapPin, Building2, ChevronRight,
+} from 'lucide-react'
 import type { AgentContext } from '@/lib/anthropic/agents'
 
 interface Pais {
@@ -25,50 +27,50 @@ const AGENTES = [
   {
     id: 'orquestador',
     nombre: 'Orquestador',
-    descripcion: 'Coordina agentes, prioriza y sintetiza',
+    desc: 'Coordina, prioriza, sintetiza',
     icono: Brain,
-    color: 'bg-violet-100 text-violet-700',
-    placeholder: 'Ej: Necesito ayuda para planificar las partidas de un edificio de 6 pisos',
+    color: 'text-violet-600 bg-violet-100',
+    placeholder: 'Ej: Necesito planificar las partidas de un edificio de 6 pisos',
   },
   {
     id: 'normativa',
     nombre: 'Normativa',
-    descripcion: 'NB · RNE · ABNT · CSI · cita artículos exactos',
+    desc: 'NB, RNE, ABNT, CSI',
     icono: Scale,
-    color: 'bg-blue-100 text-blue-700',
-    placeholder: 'Ej: ¿Cuál es la separación máxima de estribos en columnas según NB?',
+    color: 'text-blue-600 bg-blue-100',
+    placeholder: 'Ej: Separacion maxima de estribos en columnas segun NB?',
   },
   {
     id: 'metrados',
     nombre: 'Metrados',
-    descripcion: 'Cantidades, volúmenes, interpreta BIM',
+    desc: 'Cantidades, volumenes, BIM',
     icono: Calculator,
-    color: 'bg-green-100 text-green-700',
-    placeholder: 'Ej: ¿Cómo calculo el metrado de tarrajeo interior en muros?',
+    color: 'text-green-600 bg-green-100',
+    placeholder: 'Ej: Como calculo el metrado de tarrajeo interior?',
   },
   {
     id: 'partidas',
-    nombre: 'Partidas APU',
-    descripcion: 'Materiales + MO + equipos + subcontratos',
+    nombre: 'Partidas',
+    desc: 'Materiales + MO + equipos',
     icono: Layers,
-    color: 'bg-amber-100 text-amber-700',
+    color: 'text-amber-600 bg-amber-100',
     placeholder: 'Ej: Desglose la partida de muro ladrillo soga e=15cm',
   },
   {
     id: 'presupuesto',
     nombre: 'Presupuesto',
-    descripcion: 'CD + GG + utilidad + impuestos por país',
+    desc: 'CD + GG + impuestos',
     icono: DollarSign,
-    color: 'bg-emerald-100 text-emerald-700',
-    placeholder: 'Ej: ¿Qué impuestos aplican a la construcción en Bolivia?',
+    color: 'text-emerald-600 bg-emerald-100',
+    placeholder: 'Ej: Que impuestos aplican a construccion en Bolivia?',
   },
   {
     id: 'bim',
     nombre: 'BIM/Revit',
-    descripcion: 'Revit 2025 → partidas, Add-in C#',
+    desc: 'Revit 2025 → partidas',
     icono: Box,
-    color: 'bg-indigo-100 text-indigo-700',
-    placeholder: 'Ej: ¿Cómo mapeo muros de Revit a partidas de albañilería?',
+    color: 'text-indigo-600 bg-indigo-100',
+    placeholder: 'Ej: Como mapeo muros de Revit a partidas de albanileria?',
   },
 ]
 
@@ -81,16 +83,14 @@ export default function AgentesPage() {
   const fetchProyectos = useCallback(async () => {
     try {
       const res = await fetch('/api/proyectos')
-      if (!res.ok) throw new Error('Error loading projects')
+      if (!res.ok) throw new Error('Error')
       const data = await res.json()
       const rows = data as Proyecto[]
       setProyectos(rows)
       if (rows.length > 0) setSelectedProyecto(rows[0])
     } catch (error) {
       console.error('Error fetching proyectos:', error)
-    } finally {
-      setIsLoading(false)
-    }
+    } finally { setIsLoading(false) }
   }, [])
 
   useEffect(() => { fetchProyectos() }, [fetchProyectos])
@@ -105,100 +105,115 @@ export default function AgentesPage() {
 
   if (isLoading) {
     return (
-      <div className="p-8 flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      <div className="flex items-center justify-center h-full">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     )
   }
 
   return (
-    <div className="p-8 space-y-6 h-full flex flex-col">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold">Agentes IA</h1>
-        <p className="text-muted-foreground mt-1">
-          6 asistentes especializados para normativa, metrados, partidas, presupuesto y BIM
-        </p>
-      </div>
-
-      {/* Project selector */}
-      <Card>
-        <CardContent className="py-4">
-          <div className="flex items-center gap-4">
-            <span className="text-sm font-medium text-muted-foreground">Proyecto activo:</span>
-            <select
-              className="flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={selectedProyecto?.id || ''}
-              onChange={e => {
-                const p = proyectos.find(p => p.id === e.target.value)
-                setSelectedProyecto(p || null)
-              }}
-            >
-              {proyectos.length === 0 && (
-                <option value="">No hay proyectos — crea uno primero</option>
-              )}
-              {proyectos.map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.nombre} ({p.paises?.codigo || '??'})
-                </option>
-              ))}
-            </select>
-            {selectedProyecto?.paises && (
-              <Badge variant="outline">{selectedProyecto.paises.nombre}</Badge>
-            )}
-            {selectedProyecto?.tipologia && (
-              <Badge variant="secondary" className="text-xs">{selectedProyecto.tipologia}</Badge>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Agent tabs */}
-      <div className="flex gap-2 flex-wrap">
-        {AGENTES.map(agente => {
-          const Icon = agente.icono
-          const isActive = selectedAgente.id === agente.id
-          return (
-            <button
-              key={agente.id}
-              onClick={() => setSelectedAgente(agente)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
-                isActive
-                  ? 'border-primary bg-primary/5 text-primary shadow-sm'
-                  : 'border-transparent hover:bg-muted text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {agente.nombre}
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Chat area */}
-      {selectedProyecto ? (
-        <div className="flex-1 min-h-0" style={{ height: 'calc(100vh - 380px)' }}>
+    <div className="flex h-full">
+      {/* ===== CHAT AREA (fills remaining space) ===== */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {selectedProyecto ? (
           <ChatAgente
             key={`${selectedAgente.id}-${selectedProyecto.id}`}
             agente={selectedAgente.id}
-            titulo={`Agente de ${selectedAgente.nombre}`}
-            descripcion={selectedAgente.descripcion}
             endpoint={`/api/agentes/${selectedAgente.id}`}
             contexto={buildContext(selectedProyecto)}
             placeholder={selectedAgente.placeholder}
           />
-        </div>
-      ) : (
-        <Card className="p-12">
-          <div className="text-center space-y-4">
-            <Bot className="w-12 h-12 mx-auto text-muted-foreground" />
-            <h2 className="text-lg font-semibold">Sin proyecto seleccionado</h2>
-            <p className="text-muted-foreground">
-              Crea un proyecto primero para consultar a los agentes IA con contexto
-            </p>
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center space-y-3 px-8">
+              <Bot className="w-16 h-16 mx-auto text-muted-foreground/20" />
+              <h2 className="text-lg font-semibold text-muted-foreground">Sin proyecto</h2>
+              <p className="text-sm text-muted-foreground/60">
+                Crea un proyecto para consultar a los agentes IA
+              </p>
+            </div>
           </div>
-        </Card>
-      )}
+        )}
+      </div>
+
+      {/* ===== RIGHT SIDEBAR ===== */}
+      <div className="w-64 border-l bg-card flex flex-col">
+        {/* Project selector */}
+        <div className="p-4 border-b space-y-3">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Proyecto</h3>
+          <select
+            className="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={selectedProyecto?.id || ''}
+            onChange={e => {
+              const p = proyectos.find(p => p.id === e.target.value)
+              setSelectedProyecto(p || null)
+            }}
+          >
+            {proyectos.length === 0 && <option value="">Sin proyectos</option>}
+            {proyectos.map(p => (
+              <option key={p.id} value={p.id}>
+                {p.nombre}
+              </option>
+            ))}
+          </select>
+          {selectedProyecto && (
+            <div className="space-y-1">
+              {selectedProyecto.paises && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <MapPin className="w-3 h-3" />
+                  {selectedProyecto.paises.nombre}
+                </div>
+              )}
+              {selectedProyecto.tipologia && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Building2 className="w-3 h-3" />
+                  {selectedProyecto.tipologia}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Agent selector */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-1">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 mb-2">
+            Agentes
+          </h3>
+          {AGENTES.map(ag => {
+            const Icon = ag.icono
+            const isActive = selectedAgente.id === ag.id
+            return (
+              <button
+                key={ag.id}
+                onClick={() => setSelectedAgente(ag)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all ${
+                  isActive
+                    ? 'bg-primary/10 border border-primary/20'
+                    : 'hover:bg-muted border border-transparent'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${ag.color}`}>
+                  <Icon className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-medium truncate ${isActive ? 'text-primary' : ''}`}>
+                    {ag.nombre}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground truncate">{ag.desc}</p>
+                </div>
+                {isActive && <ChevronRight className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Footer info */}
+        <div className="p-3 border-t">
+          <p className="text-[10px] text-muted-foreground/50 text-center">
+            Modelo configurado en Configuracion
+          </p>
+        </div>
+      </div>
     </div>
   )
 }

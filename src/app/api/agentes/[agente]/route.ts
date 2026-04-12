@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createClient as createAdminClient, SupabaseClient } from '@supabase/supabase-js'
 import { AGENTS_REGISTRY } from '@/lib/anthropic/agents'
 import type { AgentMessage } from '@/lib/anthropic/agents'
 import { agenteRequestSchema } from '@/lib/schemas'
@@ -19,6 +20,18 @@ const ENV_KEY_MAP: Record<string, string> = {
   huggingface: 'HUGGINGFACE_API_KEY',
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _admin: SupabaseClient<any> | null = null
+function getAdmin(): SupabaseClient<any> {
+  if (!_admin) {
+    _admin = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+  }
+  return _admin
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ agente: string }> }
@@ -27,8 +40,8 @@ export async function POST(
     const { agente } = await params
 
     // Validate agent slug
-    const agentConfig = AGENTS_REGISTRY[agente as keyof typeof AGENTS_REGISTRY]
-    if (!agentConfig) {
+    const agentDef = AGENTS_REGISTRY[agente as keyof typeof AGENTS_REGISTRY]
+    if (!agentDef) {
       return Response.json(
         { error: 'Agente "' + agente + '" no encontrado. Disponibles: ' + Object.keys(AGENTS_REGISTRY).join(', ') },
         { status: 404 }
@@ -45,7 +58,7 @@ export async function POST(
     // Parse and validate body
     const body = await request.json()
     const validated = agenteRequestSchema.parse(body)
-    const systemPrompt = agentConfig.buildPrompt(validated.contexto)
+    const systemPrompt = agentDef.buildPrompt(validated.contexto)
 
     // Build messages array
     const messages: { role: 'user' | 'assistant'; content: string }[] = []
@@ -56,9 +69,32 @@ export async function POST(
     }
     messages.push({ role: 'user', content: validated.mensaje })
 
-    // Use per-agent defaults, then request overrides, then global fallback
-    const provider = (validated.provider || agentConfig.defaultProvider || 'openrouter') as LLMProvider
-    const model = validated.model || agentConfig.defaultModel || getDefaultModel(provider)
+    // Resolve provider/model: request override → saved config → registry default
+    let provider: LLMProvider
+    let model: string
+
+    if (validated.provider && validated.model) {
+      // Explicit override from request (e.g., chat settings panel)
+      provider = validated.provider as LLMProvider
+      model = validated.model
+    } else {
+      // Read user's saved agent config from DB
+      const admin = getAdmin()
+      const { data: savedConfig } = await admin
+        .from('agent_config')
+        .select('provider, model')
+        .eq('user_id', user.id)
+        .eq('agent_slug', agente)
+        .single()
+
+      if (savedConfig) {
+        provider = savedConfig.provider as LLMProvider
+        model = savedConfig.model
+      } else {
+        provider = (agentDef.defaultProvider || 'openrouter') as LLMProvider
+        model = agentDef.defaultModel || getDefaultModel(provider)
+      }
+    }
 
     // Resolve API key: user key -> org key -> env var
     let apiKey = ''

@@ -57,6 +57,7 @@ export default function ProyectosPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [estadoChanging, setEstadoChanging] = useState<string | null>(null)
 
   const [form, setForm] = useState({
     nombre: '',
@@ -178,6 +179,23 @@ export default function ProyectosPage() {
     } catch (error) {
       console.error('Error deleting:', error)
       setFormError(error instanceof Error ? error.message : 'Error al eliminar')
+    }
+  }
+
+  const handleEstadoChange = async (projectId: string, newEstado: string) => {
+    setEstadoChanging(projectId)
+    try {
+      const res = await fetch('/api/proyectos', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: projectId, estado: newEstado }),
+      })
+      if (!res.ok) throw new Error('Error al cambiar estado')
+      await fetchProyectos()
+    } catch (error) {
+      console.error('Error changing estado:', error)
+    } finally {
+      setEstadoChanging(null)
     }
   }
 
@@ -347,9 +365,21 @@ export default function ProyectosPage() {
                           <h3 className="font-semibold text-lg group-hover:text-primary transition-colors">
                             {proyecto.nombre}
                           </h3>
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${estado.color}`}>
-                            {estado.label}
-                          </span>
+                          <select
+                            value={proyecto.estado || 'activo'}
+                            onChange={e => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              handleEstadoChange(proyecto.id, e.target.value)
+                            }}
+                            onClick={e => e.stopPropagation()}
+                            disabled={estadoChanging === proyecto.id}
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border-0 cursor-pointer appearance-none ${estado.color}`}
+                          >
+                            {Object.entries(ESTADOS).map(([key, val]) => (
+                              <option key={key} value={key}>{val.label}</option>
+                            ))}
+                          </select>
                         </div>
                         {proyecto.descripcion && (
                           <p className="text-sm text-muted-foreground line-clamp-1">

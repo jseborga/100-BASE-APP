@@ -16,10 +16,20 @@ import {
 // Types
 // ============================================================
 
-interface ModelInfo { id: string; name: string; contextWindow?: number }
+interface ProviderModelItem {
+  id: string
+  provider: string
+  model_id: string
+  model_name: string
+  context_window: number
+  activo: boolean
+  orden: number
+}
+
 interface ProviderInfo {
   id: string; name: string; description: string; keyId?: string;
-  maskedKey?: string; label?: string; models?: ModelInfo[]; supportsModelFetch?: boolean
+  maskedKey?: string; label?: string; models?: { id: string; name: string; contextWindow?: number }[];
+  supportsModelFetch?: boolean
 }
 interface AllProvider { id: string; name: string; description: string; baseURL?: string }
 interface OrgData { id: string; nombre: string; slug: string | null; plan: string | null; created_at: string }
@@ -47,6 +57,15 @@ const AGENT_LABELS: Record<string, string> = {
   partidas: 'Partidas APU', presupuesto: 'Presupuesto', bim: 'BIM/Revit',
 }
 
+const AGENT_DESCRIPTIONS: Record<string, string> = {
+  orquestador: 'Coordina agentes, prioriza tareas',
+  normativa: 'Experto en NB, RNE, ABNT, CSI',
+  metrados: 'Cantidades, volumenes, BIM',
+  partidas: 'Desglose materiales + MO + equipos',
+  presupuesto: 'CD + GG + utilidad + impuestos',
+  bim: 'Categorias Revit 2025 → partidas',
+}
+
 const ROLES = [
   { value: 'admin', label: 'Administrador' },
   { value: 'miembro', label: 'Miembro' },
@@ -72,9 +91,15 @@ export default function ConfiguracionPage() {
   const [addLabel, setAddLabel] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [dynamicModels, setDynamicModels] = useState<ModelInfo[]>([])
-  const [loadingModels, setLoadingModels] = useState(false)
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null)
+
+  // --- Provider Models State ---
+  const [providerModels, setProviderModels] = useState<ProviderModelItem[]>([])
+  const [showAddModel, setShowAddModel] = useState<string | null>(null) // provider id
+  const [newModelId, setNewModelId] = useState('')
+  const [newModelName, setNewModelName] = useState('')
+  const [newModelCtx, setNewModelCtx] = useState('')
+  const [addingModel, setAddingModel] = useState(false)
 
   // --- Org State ---
   const [org, setOrg] = useState<OrgData | null>(null)
@@ -99,7 +124,6 @@ export default function ConfiguracionPage() {
   const [testingAgent, setTestingAgent] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, { ok: boolean; latency?: number; error?: string }>>({})
 
-
   // ============================================================
   // Fetch functions
   // ============================================================
@@ -114,6 +138,16 @@ export default function ConfiguracionPage() {
       }
     } catch (err) { console.error('Error fetching LLM config:', err) }
     finally { setIsLoadingLLM(false) }
+  }, [])
+
+  const fetchProviderModels = useCallback(async () => {
+    try {
+      const res = await fetch('/api/config/llm/provider-models')
+      if (res.ok) {
+        const data = await res.json()
+        setProviderModels(data.models || [])
+      }
+    } catch (err) { console.error('Error fetching provider models:', err) }
   }, [])
 
   const fetchOrg = useCallback(async () => {
@@ -145,27 +179,29 @@ export default function ConfiguracionPage() {
     fetchLLMConfig()
     fetchOrg()
     fetchAgentConfig()
-  }, [fetchLLMConfig, fetchOrg, fetchAgentConfig])
+    fetchProviderModels()
+  }, [fetchLLMConfig, fetchOrg, fetchAgentConfig, fetchProviderModels])
+
+  // ============================================================
+  // Get models for a provider (from DB provider_models, fallback to static)
+  // ============================================================
+
+  const getModelsForProvider = useCallback((providerId: string) => {
+    const dbModels = providerModels.filter(m => m.provider === providerId)
+    if (dbModels.length > 0) {
+      return dbModels.map(m => ({ id: m.model_id, name: m.model_name, contextWindow: m.context_window }))
+    }
+    // Fallback: use static models from configuredProviders
+    const prov = configuredProviders.find(p => p.id === providerId)
+    return prov?.models || []
+  }, [providerModels, configuredProviders])
 
   // ============================================================
   // LLM handlers
   // ============================================================
 
-  const fetchDynamicModels = async (providerId: string) => {
-    setLoadingModels(true)
-    try {
-      const res = await fetch(`/api/config/llm/models?provider=${providerId}`)
-      if (res.ok) { const data = await res.json(); setDynamicModels(data.models || []) }
-    } catch (err) { console.error('Error fetching models:', err) }
-    finally { setLoadingModels(false) }
-  }
-
   const toggleExpanded = (providerId: string) => {
-    if (expandedProvider === providerId) { setExpandedProvider(null) } else {
-      setExpandedProvider(providerId)
-      const prov = configuredProviders.find(p => p.id === providerId)
-      if (prov?.supportsModelFetch) fetchDynamicModels(providerId)
-    }
+    setExpandedProvider(expandedProvider === providerId ? null : providerId)
   }
 
   const handleAddKey = async () => {
@@ -197,6 +233,42 @@ export default function ConfiguracionPage() {
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Error al eliminar' })
     } finally { setDeleting(null) }
+  }
+
+  // ============================================================
+  // Provider Models handlers
+  // ============================================================
+
+  const handleAddModel = async (providerId: string) => {
+    if (!newModelId.trim() || !newModelName.trim()) return
+    setAddingModel(true); setMessage(null)
+    try {
+      const res = await fetch('/api/config/llm/provider-models', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: providerId,
+          model_id: newModelId.trim(),
+          model_name: newModelName.trim(),
+          context_window: parseInt(newModelCtx) || 0,
+        }),
+      })
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Error') }
+      setMessage({ type: 'success', text: `Modelo ${newModelName} agregado` })
+      setNewModelId(''); setNewModelName(''); setNewModelCtx(''); setShowAddModel(null)
+      await fetchProviderModels()
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Error' })
+    } finally { setAddingModel(false) }
+  }
+
+  const handleDeleteModel = async (modelDbId: string) => {
+    try {
+      const res = await fetch(`/api/config/llm/provider-models?id=${modelDbId}`, { method: 'DELETE' })
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error) }
+      await fetchProviderModels()
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Error' })
+    }
   }
 
   // ============================================================
@@ -283,8 +355,22 @@ export default function ConfiguracionPage() {
 
   const startEditAgent = (slug: string) => {
     const cfg = agentConfig[slug]
-    if (cfg) { setAgentProvider(cfg.provider); setAgentModel(cfg.model) }
+    if (cfg) {
+      setAgentProvider(cfg.provider)
+      setAgentModel(cfg.model)
+    }
     setEditingAgent(slug)
+  }
+
+  const handleProviderChangeForAgent = (providerId: string) => {
+    setAgentProvider(providerId)
+    // Auto-select first model of this provider
+    const models = getModelsForProvider(providerId)
+    if (models.length > 0) {
+      setAgentModel(models[0].id)
+    } else {
+      setAgentModel('')
+    }
   }
 
   const handleSaveAgent = async (slug: string) => {
@@ -295,12 +381,13 @@ export default function ConfiguracionPage() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_slug: slug, provider: agentProvider, model: agentModel }),
       })
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error) }
+      const data = await res.json()
+      if (!res.ok) { throw new Error(data.error || 'Error al guardar') }
       setMessage({ type: 'success', text: `Modelo de ${AGENT_LABELS[slug]} actualizado` })
       setEditingAgent(null)
       await fetchAgentConfig()
     } catch (err) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Error' })
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Error al guardar agente' })
     } finally { setSavingAgent(false) }
   }
 
@@ -336,6 +423,37 @@ export default function ConfiguracionPage() {
       setTestingAgent(null)
     }
   }
+
+  // ============================================================
+  // Helpers
+  // ============================================================
+
+  // Get all available providers for the agent dropdown (configured + env + openrouter fallback)
+  const getAvailableProviders = useCallback(() => {
+    const provIds = new Set<string>()
+    const result: { id: string; name: string }[] = []
+
+    for (const p of configuredProviders) {
+      if (!provIds.has(p.id)) {
+        provIds.add(p.id)
+        result.push({ id: p.id, name: p.name })
+      }
+    }
+
+    // Always include openrouter as fallback
+    if (!provIds.has('openrouter')) {
+      result.push({ id: 'openrouter', name: 'OpenRouter (default)' })
+    }
+
+    return result
+  }, [configuredProviders])
+
+  // Get model name for display
+  const getModelDisplayName = useCallback((provider: string, modelId: string) => {
+    const models = getModelsForProvider(provider)
+    const found = models.find(m => m.id === modelId)
+    return found?.name || modelId
+  }, [getModelsForProvider])
 
   // ============================================================
   // Render
@@ -396,7 +514,6 @@ export default function ConfiguracionPage() {
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
             </div>
           ) : !org ? (
-            /* Create org */
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -409,11 +526,7 @@ export default function ConfiguracionPage() {
                 </p>
                 <div className="space-y-2">
                   <Label>Nombre de la empresa</Label>
-                  <Input
-                    placeholder="Ej: SSA Ingenieria SRL"
-                    value={orgName}
-                    onChange={e => setOrgName(e.target.value)}
-                  />
+                  <Input placeholder="Ej: SSA Ingenieria SRL" value={orgName} onChange={e => setOrgName(e.target.value)} />
                 </div>
                 <Button onClick={handleCreateOrg} disabled={!orgName.trim() || savingOrg}>
                   {savingOrg ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
@@ -422,7 +535,6 @@ export default function ConfiguracionPage() {
               </CardContent>
             </Card>
           ) : (
-            /* Show org + members */
             <>
               <Card>
                 <CardHeader>
@@ -485,35 +597,22 @@ export default function ConfiguracionPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {/* Invite form */}
                   {showInvite && (
                     <div className="p-4 rounded-lg border border-primary/30 space-y-3">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div className="md:col-span-2 space-y-1">
                           <Label className="text-xs">Email del usuario</Label>
-                          <Input
-                            type="email"
-                            placeholder="usuario@empresa.com"
-                            value={inviteEmail}
-                            onChange={e => setInviteEmail(e.target.value)}
-                          />
+                          <Input type="email" placeholder="usuario@empresa.com" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} />
                         </div>
                         <div className="space-y-1">
                           <Label className="text-xs">Rol</Label>
-                          <select
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            value={inviteRole}
-                            onChange={e => setInviteRole(e.target.value)}
-                          >
-                            {ROLES.map(r => (
-                              <option key={r.value} value={r.value}>{r.label}</option>
-                            ))}
+                          <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            value={inviteRole} onChange={e => setInviteRole(e.target.value)}>
+                            {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                           </select>
                         </div>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        El usuario debe estar registrado en la plataforma.
-                      </p>
+                      <p className="text-xs text-muted-foreground">El usuario debe estar registrado en la plataforma.</p>
                       <div className="flex gap-2">
                         <Button size="sm" onClick={handleInvite} disabled={inviting || !inviteEmail.trim()}>
                           {inviting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
@@ -526,7 +625,6 @@ export default function ConfiguracionPage() {
                     </div>
                   )}
 
-                  {/* Member list */}
                   {members.map(m => (
                     <div key={m.id} className="flex items-center justify-between p-3 rounded-lg border">
                       <div className="space-y-0.5">
@@ -536,14 +634,9 @@ export default function ConfiguracionPage() {
                         </div>
                         <div className="flex items-center gap-2">
                           {isAdmin && !m.is_current ? (
-                            <select
-                              className="h-7 rounded border border-input bg-background px-2 text-xs"
-                              value={m.rol}
-                              onChange={e => handleChangeRole(m.id, e.target.value)}
-                            >
-                              {ROLES.map(r => (
-                                <option key={r.value} value={r.value}>{r.label}</option>
-                              ))}
+                            <select className="h-7 rounded border border-input bg-background px-2 text-xs"
+                              value={m.rol} onChange={e => handleChangeRole(m.id, e.target.value)}>
+                              {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                             </select>
                           ) : (
                             <Badge variant="secondary" className="text-xs">
@@ -553,11 +646,8 @@ export default function ConfiguracionPage() {
                         </div>
                       </div>
                       {isAdmin && !m.is_current && (
-                        <Button
-                          variant="ghost" size="sm"
-                          onClick={() => handleRemoveMember(m.id)}
-                          className="text-destructive hover:text-destructive"
-                        >
+                        <Button variant="ghost" size="sm" onClick={() => handleRemoveMember(m.id)}
+                          className="text-destructive hover:text-destructive">
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       )}
@@ -571,11 +661,10 @@ export default function ConfiguracionPage() {
       )}
 
       {/* ============================================================ */}
-      {/* TAB: API Keys */}
+      {/* TAB: API Keys + Models */}
       {/* ============================================================ */}
       {activeTab === 'llm' && (
         <div className="space-y-6">
-          {/* Security note */}
           <div className="flex items-start gap-3 p-4 rounded-lg bg-muted/50 border">
             <Shield className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
             <div className="text-sm">
@@ -605,73 +694,111 @@ export default function ConfiguracionPage() {
                     </div>
                   </Card>
                 ) : (
-                  configuredProviders.map(p => (
-                    <Card key={p.id}>
-                      <CardContent className="py-4">
-                        <div className="flex items-center justify-between">
-                          <div className="space-y-1 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">{p.name}</span>
-                              <Badge variant="outline" className="text-xs">{p.maskedKey}</Badge>
-                              {p.label && <Badge variant="secondary" className="text-xs">{p.label}</Badge>}
-                            </div>
-                            <p className="text-xs text-muted-foreground">{p.description}</p>
-                            {(() => {
-                              const provInfo = allProviders.find(ap => ap.id === p.id)
-                              return provInfo?.baseURL ? (
-                                <p className="text-xs text-muted-foreground font-mono flex items-center gap-1">
-                                  <Globe className="w-3 h-3" /> {provInfo.baseURL}
-                                </p>
-                              ) : null
-                            })()}
-                            {p.models && p.models.length > 0 && (
+                  configuredProviders.map(p => {
+                    const provModels = providerModels.filter(m => m.provider === p.id)
+                    const isExpanded = expandedProvider === p.id
+
+                    return (
+                      <Card key={p.id}>
+                        <CardContent className="py-4">
+                          <div className="flex items-center justify-between">
+                            <div className="space-y-1 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{p.name}</span>
+                                <Badge variant="outline" className="text-xs">{p.maskedKey}</Badge>
+                                {p.label && <Badge variant="secondary" className="text-xs">{p.label}</Badge>}
+                              </div>
+                              <p className="text-xs text-muted-foreground">{p.description}</p>
+                              {(() => {
+                                const provInfo = allProviders.find(ap => ap.id === p.id)
+                                return provInfo?.baseURL ? (
+                                  <p className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                                    <Globe className="w-3 h-3" /> {provInfo.baseURL}
+                                  </p>
+                                ) : null
+                              })()}
                               <button onClick={() => toggleExpanded(p.id)}
                                 className="text-xs text-primary hover:underline flex items-center gap-1 mt-1">
                                 <Cpu className="w-3 h-3" />
-                                {p.models.length} modelo{p.models.length !== 1 ? 's' : ''}
-                                {p.supportsModelFetch && ' (ver dinamicos)'}
+                                {provModels.length || p.models?.length || 0} modelo{(provModels.length || p.models?.length || 0) !== 1 ? 's' : ''} disponibles
                               </button>
-                            )}
-                            {expandedProvider === p.id && (
-                              <div className="mt-2 p-3 bg-muted/50 rounded-lg space-y-1 max-h-48 overflow-y-auto">
-                                {p.models?.map(m => (
-                                  <div key={m.id} className="flex justify-between text-xs py-1 border-b last:border-0">
-                                    <span className="font-medium">{m.name}</span>
-                                    <span className="text-muted-foreground font-mono">{m.id}</span>
-                                  </div>
-                                ))}
-                                {loadingModels && (
-                                  <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-                                    <Loader2 className="w-3 h-3 animate-spin" /> Cargando...
-                                  </div>
-                                )}
-                                {!loadingModels && dynamicModels.length > 0 && (
-                                  <>
-                                    <p className="text-xs font-medium text-primary mt-2 mb-1">+ {dynamicModels.length} dinamicos:</p>
-                                    {dynamicModels.slice(0, 30).map(m => (
-                                      <div key={m.id} className="flex justify-between text-xs py-1 border-b last:border-0">
-                                        <span>{m.name}</span>
-                                        <span className="text-muted-foreground font-mono text-[10px]">{m.id}</span>
+
+                              {/* Expanded model list */}
+                              {isExpanded && (
+                                <div className="mt-2 p-3 bg-muted/50 rounded-lg space-y-1">
+                                  {provModels.length > 0 ? (
+                                    provModels.map(m => (
+                                      <div key={m.id} className="flex justify-between items-center text-xs py-1.5 border-b last:border-0">
+                                        <div>
+                                          <span className="font-medium">{m.model_name}</span>
+                                          <span className="text-muted-foreground font-mono ml-2">{m.model_id}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          {m.context_window > 0 && (
+                                            <span className="text-muted-foreground">{(m.context_window / 1000).toFixed(0)}K</span>
+                                          )}
+                                          <button onClick={() => handleDeleteModel(m.id)}
+                                            className="text-muted-foreground hover:text-destructive">
+                                            <Trash2 className="w-3 h-3" />
+                                          </button>
+                                        </div>
                                       </div>
-                                    ))}
-                                  </>
-                                )}
-                              </div>
-                            )}
+                                    ))
+                                  ) : (
+                                    p.models?.map(m => (
+                                      <div key={m.id} className="flex justify-between text-xs py-1 border-b last:border-0">
+                                        <span className="font-medium">{m.name}</span>
+                                        <span className="text-muted-foreground font-mono">{m.id}</span>
+                                      </div>
+                                    ))
+                                  )}
+
+                                  {/* Add model form */}
+                                  {showAddModel === p.id ? (
+                                    <div className="mt-2 pt-2 border-t space-y-2">
+                                      <div className="grid grid-cols-3 gap-2">
+                                        <Input className="h-7 text-xs" placeholder="model-id"
+                                          value={newModelId} onChange={e => setNewModelId(e.target.value)} />
+                                        <Input className="h-7 text-xs" placeholder="Nombre visible"
+                                          value={newModelName} onChange={e => setNewModelName(e.target.value)} />
+                                        <Input className="h-7 text-xs" placeholder="Context (tokens)"
+                                          value={newModelCtx} onChange={e => setNewModelCtx(e.target.value)} />
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button size="sm" className="h-7 text-xs" onClick={() => handleAddModel(p.id)}
+                                          disabled={addingModel || !newModelId.trim() || !newModelName.trim()}>
+                                          {addingModel ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
+                                          Agregar
+                                        </Button>
+                                        <Button variant="outline" size="sm" className="h-7 text-xs"
+                                          onClick={() => { setShowAddModel(null); setNewModelId(''); setNewModelName(''); setNewModelCtx('') }}>
+                                          Cancelar
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <button onClick={() => setShowAddModel(p.id)}
+                                      className="flex items-center gap-1 text-xs text-primary hover:underline mt-2 pt-2 border-t w-full">
+                                      <Plus className="w-3 h-3" /> Agregar modelo
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Check className="w-4 h-4 text-emerald-500" />
+                              {p.keyId && (
+                                <Button variant="ghost" size="sm" onClick={() => handleDeleteKey(p.id, p.keyId)}
+                                  disabled={deleting === p.id} className="text-destructive hover:text-destructive">
+                                  {deleting === p.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                                </Button>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Check className="w-4 h-4 text-emerald-500" />
-                            {p.keyId && (
-                              <Button variant="ghost" size="sm" onClick={() => handleDeleteKey(p.id, p.keyId)}
-                                disabled={deleting === p.id} className="text-destructive hover:text-destructive">
-                                {deleting === p.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))
+                        </CardContent>
+                      </Card>
+                    )
+                  })
                 )}
               </div>
 
@@ -707,7 +834,7 @@ export default function ConfiguracionPage() {
                 </div>
               </div>
 
-              {/* Add form */}
+              {/* Add key form */}
               {!showAddForm ? (
                 <Button onClick={() => { setShowAddForm(true); setAddProvider(allProviders[0]?.id || 'openrouter') }} className="gap-2">
                   <Plus className="w-4 h-4" /> Agregar proveedor
@@ -778,8 +905,8 @@ export default function ConfiguracionPage() {
             <div className="text-sm">
               <p className="font-medium">Modelo por defecto de cada agente</p>
               <p className="text-muted-foreground mt-1">
-                Configura que proveedor y modelo usa cada agente. Los valores por defecto usan OpenRouter con modelos economicos.
-                Puedes cambiarlo temporalmente desde el chat de cada agente.
+                Configura que proveedor y modelo usa cada agente. Selecciona de la lista de modelos disponibles
+                o agrega nuevos modelos en la tab &quot;API Keys&quot;.
               </p>
             </div>
           </div>
@@ -790,141 +917,158 @@ export default function ConfiguracionPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {Object.entries(agentConfig).map(([slug, cfg]) => (
-                <Card key={slug}>
-                  <CardContent className="py-4">
-                    {editingAgent === slug ? (
-                      /* Edit mode */
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium">{AGENT_LABELS[slug] || slug}</span>
-                          <Button variant="ghost" size="sm" onClick={() => setEditingAgent(null)}>
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <Label className="text-xs">Proveedor</Label>
-                            <select className="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
-                              value={agentProvider} onChange={e => setAgentProvider(e.target.value)}>
-                              {configuredProviders.map(p => (
-                                <option key={p.id} value={p.id}>{p.name}</option>
-                              ))}
-                              {/* Also show providers from defaults if not configured */}
-                              {!configuredProviders.find(p => p.id === 'openrouter') && (
-                                <option value="openrouter">OpenRouter (default)</option>
-                              )}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Modelo (ID)</Label>
-                            <Input className="h-9 text-sm" value={agentModel}
-                              onChange={e => setAgentModel(e.target.value)}
-                              placeholder="google/gemini-2.0-flash" />
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button size="sm" onClick={() => handleSaveAgent(slug)} disabled={savingAgent || !agentModel}>
-                            {savingAgent ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-                            Guardar
-                          </Button>
-                          <Button variant="outline" size="sm"
-                            onClick={() => handleTestConnection(slug, agentProvider, agentModel)}
-                            disabled={testingAgent === slug || !agentProvider || !agentModel}>
-                            {testingAgent === slug
-                              ? <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                              : <Zap className="w-4 h-4 mr-1" />}
-                            Test
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => setEditingAgent(null)}>Cancelar</Button>
-                        </div>
-                        {/* Test result in edit mode */}
-                        {testResult[slug] && (
-                          <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
-                            testResult[slug].ok
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : 'bg-red-50 text-red-700 border border-red-200'
-                          }`}>
-                            {testResult[slug].ok ? (
-                              <>
-                                <CircleCheck className="w-3.5 h-3.5" />
-                                <span>Conexion OK — modelo valido</span>
-                                {testResult[slug].latency && (
-                                  <span className="text-muted-foreground">({testResult[slug].latency}ms)</span>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                <CircleX className="w-3.5 h-3.5" />
-                                <span>{testResult[slug].error || 'Error de conexion'}</span>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      /* View mode */
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
+              {Object.entries(agentConfig).map(([slug, cfg]) => {
+                const availableProviders = getAvailableProviders()
+                const currentModels = getModelsForProvider(editingAgent === slug ? agentProvider : cfg.provider)
+
+                return (
+                  <Card key={slug}>
+                    <CardContent className="py-4">
+                      {editingAgent === slug ? (
+                        /* Edit mode */
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div>
                               <span className="font-medium">{AGENT_LABELS[slug] || slug}</span>
-                              {cfg.isCustom && <Badge variant="secondary" className="text-xs">personalizado</Badge>}
+                              <span className="text-xs text-muted-foreground ml-2">{AGENT_DESCRIPTIONS[slug]}</span>
                             </div>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <span className="font-medium">{cfg.provider}</span>
-                              <span>/</span>
-                              <span className="font-mono">{cfg.model}</span>
+                            <Button variant="ghost" size="sm" onClick={() => setEditingAgent(null)}>
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Proveedor</Label>
+                              <select className="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
+                                value={agentProvider} onChange={e => handleProviderChangeForAgent(e.target.value)}>
+                                {availableProviders.map(p => (
+                                  <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Modelo</Label>
+                              {currentModels.length > 0 ? (
+                                <select className="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
+                                  value={agentModel} onChange={e => setAgentModel(e.target.value)}>
+                                  {currentModels.map(m => (
+                                    <option key={m.id} value={m.id}>{m.name}</option>
+                                  ))}
+                                  {/* If current model is not in the list, show it as custom */}
+                                  {agentModel && !currentModels.find(m => m.id === agentModel) && (
+                                    <option value={agentModel}>{agentModel} (personalizado)</option>
+                                  )}
+                                </select>
+                              ) : (
+                                <Input className="h-9 text-sm" value={agentModel}
+                                  onChange={e => setAgentModel(e.target.value)}
+                                  placeholder="model-id" />
+                              )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-1">
-                            <Button variant="ghost" size="sm"
-                              onClick={() => handleTestConnection(slug, cfg.provider, cfg.model)}
-                              disabled={testingAgent === slug}
-                              title="Probar conexion">
+                          {currentModels.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              {(() => {
+                                const m = currentModels.find(m => m.id === agentModel)
+                                return m?.contextWindow ? `Contexto: ${(m.contextWindow / 1000).toFixed(0)}K tokens` : ''
+                              })()}
+                            </p>
+                          )}
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={() => handleSaveAgent(slug)} disabled={savingAgent || !agentModel}>
+                              {savingAgent ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
+                              Guardar
+                            </Button>
+                            <Button variant="outline" size="sm"
+                              onClick={() => handleTestConnection(slug, agentProvider, agentModel)}
+                              disabled={testingAgent === slug || !agentProvider || !agentModel}>
                               {testingAgent === slug
-                                ? <Loader2 className="w-4 h-4 animate-spin" />
-                                : <Zap className="w-4 h-4" />}
+                                ? <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                                : <Zap className="w-4 h-4 mr-1" />}
+                              Test
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => startEditAgent(slug)} title="Editar">
-                              <Pencil className="w-4 h-4" />
-                            </Button>
-                            {cfg.isCustom && (
-                              <Button variant="ghost" size="sm" onClick={() => handleResetAgent(slug)}
-                                title="Restaurar default" className="text-muted-foreground">
-                                <RotateCcw className="w-4 h-4" />
-                              </Button>
-                            )}
+                            <Button variant="outline" size="sm" onClick={() => setEditingAgent(null)}>Cancelar</Button>
                           </div>
+                          {testResult[slug] && (
+                            <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+                              testResult[slug].ok
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}>
+                              {testResult[slug].ok ? (
+                                <>
+                                  <CircleCheck className="w-3.5 h-3.5" />
+                                  <span>Conexion OK</span>
+                                  {testResult[slug].latency && <span className="text-muted-foreground">({testResult[slug].latency}ms)</span>}
+                                </>
+                              ) : (
+                                <>
+                                  <CircleX className="w-3.5 h-3.5" />
+                                  <span>{testResult[slug].error || 'Error de conexion'}</span>
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        {/* Test result */}
-                        {testResult[slug] && (
-                          <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
-                            testResult[slug].ok
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : 'bg-red-50 text-red-700 border border-red-200'
-                          }`}>
-                            {testResult[slug].ok ? (
-                              <>
-                                <CircleCheck className="w-3.5 h-3.5" />
-                                <span>Conexion exitosa</span>
-                                {testResult[slug].latency && (
-                                  <span className="text-muted-foreground">({testResult[slug].latency}ms)</span>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                <CircleX className="w-3.5 h-3.5" />
-                                <span>{testResult[slug].error || 'Error de conexion'}</span>
-                              </>
-                            )}
+                      ) : (
+                        /* View mode */
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{AGENT_LABELS[slug] || slug}</span>
+                                {cfg.isCustom && <Badge variant="secondary" className="text-xs">personalizado</Badge>}
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                <span className="font-medium">{cfg.provider}</span>
+                                <span>/</span>
+                                <span className="font-mono">{getModelDisplayName(cfg.provider, cfg.model)}</span>
+                              </div>
+                              <p className="text-xs text-muted-foreground">{AGENT_DESCRIPTIONS[slug]}</p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button variant="ghost" size="sm"
+                                onClick={() => handleTestConnection(slug, cfg.provider, cfg.model)}
+                                disabled={testingAgent === slug} title="Probar conexion">
+                                {testingAgent === slug ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => startEditAgent(slug)} title="Editar">
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              {cfg.isCustom && (
+                                <Button variant="ghost" size="sm" onClick={() => handleResetAgent(slug)}
+                                  title="Restaurar default" className="text-muted-foreground">
+                                  <RotateCcw className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                          {testResult[slug] && (
+                            <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+                              testResult[slug].ok
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}>
+                              {testResult[slug].ok ? (
+                                <>
+                                  <CircleCheck className="w-3.5 h-3.5" />
+                                  <span>Conexion exitosa</span>
+                                  {testResult[slug].latency && <span className="text-muted-foreground">({testResult[slug].latency}ms)</span>}
+                                </>
+                              ) : (
+                                <>
+                                  <CircleX className="w-3.5 h-3.5" />
+                                  <span>{testResult[slug].error || 'Error de conexion'}</span>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })}
             </div>
           )}
 
@@ -936,6 +1080,7 @@ export default function ConfiguracionPage() {
               <p><span className="font-medium text-foreground">google/gemini-2.5-flash-preview</span> — mejor razonamiento (~$0.15/M). Recomendado para normativa y BIM.</p>
               <p><span className="font-medium text-foreground">anthropic/claude-sonnet-4</span> — alta calidad. Para consultas complejas del orquestador.</p>
               <p><span className="font-medium text-foreground">openai/gpt-4o-mini</span> — alternativa economica de OpenAI.</p>
+              <p className="pt-2 text-xs border-t">Para agregar o quitar modelos de la lista, ve a la tab &quot;API Keys&quot; y expande el proveedor.</p>
             </CardContent>
           </Card>
         </div>
