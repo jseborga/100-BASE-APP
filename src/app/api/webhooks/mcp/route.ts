@@ -85,6 +85,7 @@ const ACTIONS: Record<string, ActionHandler> = {
   add_partidas_to_project: handleAddPartidasToProject,
   remove_partidas_from_project: handleRemovePartidasFromProject,
   update_metrado: handleUpdateMetrado,
+  update_partida: handleUpdatePartida,
   create_partida: handleCreatePartida,
   create_suggestion: handleCreateSuggestion,
   approve_suggestion: handleApproveSuggestion,
@@ -141,6 +142,10 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
   update_metrado: {
     description: 'Update metrado for a partida in a project',
     params: '{ proyecto_id: string, partida_id: string, metrado_manual?: number, metrado_final?: number, notas?: string }',
+  },
+  update_partida: {
+    description: 'Update a partida in the master catalog (name, description, unit, chapter)',
+    params: '{ partida_id: string, nombre?: string, descripcion?: string, unidad?: string, capitulo?: string }',
   },
   create_partida: {
     description: 'Create a new partida in the master catalog',
@@ -468,6 +473,30 @@ async function handleUpdateMetrado(params: Record<string, unknown>) {
 
   if (error) throw new Error(error.message)
   return data
+}
+
+async function handleUpdatePartida(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const partida_id = params.partida_id as string
+  if (!partida_id) throw new Error('partida_id is required')
+
+  const update: Record<string, unknown> = {}
+  if (params.nombre !== undefined) update.nombre = params.nombre
+  if (params.descripcion !== undefined) update.descripcion = params.descripcion
+  if (params.unidad !== undefined) update.unidad = params.unidad
+  if (params.capitulo !== undefined) update.capitulo = params.capitulo
+
+  if (Object.keys(update).length === 0) throw new Error('No fields to update')
+
+  const { data, error } = await admin
+    .from('partidas')
+    .update(update)
+    .eq('id', partida_id)
+    .select('id, nombre, unidad, capitulo, descripcion')
+    .single()
+
+  if (error) throw new Error(error.message)
+  return { partida: data, message: `Partida updated` }
 }
 
 async function handleCreatePartida(params: Record<string, unknown>) {
