@@ -30,7 +30,7 @@ export async function POST(
     const agentConfig = AGENTS_REGISTRY[agente as keyof typeof AGENTS_REGISTRY]
     if (!agentConfig) {
       return Response.json(
-        { error: `Agente "${agente}" no encontrado. Disponibles: ${Object.keys(AGENTS_REGISTRY).join(', ')}` },
+        { error: 'Agente "' + agente + '" no encontrado. Disponibles: ' + Object.keys(AGENTS_REGISTRY).join(', ') },
         { status: 404 }
       )
     }
@@ -56,8 +56,9 @@ export async function POST(
     }
     messages.push({ role: 'user', content: validated.mensaje })
 
-    const provider = (validated.provider || 'openai') as LLMProvider
-    const model = validated.model || getDefaultModel(provider)
+    // Use per-agent defaults, then request overrides, then global fallback
+    const provider = (validated.provider || agentConfig.defaultProvider || 'openrouter') as LLMProvider
+    const model = validated.model || agentConfig.defaultModel || getDefaultModel(provider)
 
     // Resolve API key: user key -> org key -> env var
     let apiKey = ''
@@ -101,7 +102,7 @@ export async function POST(
 
     if (!apiKey) {
       return Response.json(
-        { error: `No hay API key para ${provider}. Ve a Configuracion para agregar una.` },
+        { error: 'No hay API key para ' + provider + '. Ve a Configuracion para agregar una.' },
         { status: 400 }
       )
     }
