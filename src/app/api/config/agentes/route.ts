@@ -1,7 +1,20 @@
 import { NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient as createServerClient } from '@/lib/supabase/server'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { AGENTS_REGISTRY } from '@/lib/anthropic/agents'
 import { z } from 'zod'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _admin: SupabaseClient<any> | null = null
+function getAdmin(): SupabaseClient<any> {
+  if (!_admin) {
+    _admin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+  }
+  return _admin
+}
 
 const validSlugs = Object.keys(AGENTS_REGISTRY) as [string, ...string[]]
 
@@ -14,13 +27,14 @@ const upsertSchema = z.object({
 // GET /api/config/agentes — returns user's agent LLM config
 export async function GET() {
   try {
-    const supabase = await createClient()
+    const supabase = await createServerClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       return Response.json({ error: 'No autorizado' }, { status: 401 })
     }
 
-    const { data } = await supabase
+    const admin = getAdmin()
+    const { data } = await admin
       .from('agent_config')
       .select('agent_slug, provider, model')
       .eq('user_id', user.id)
@@ -58,7 +72,7 @@ export async function GET() {
 // POST /api/config/agentes — upsert agent config
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
+    const supabase = await createServerClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       return Response.json({ error: 'No autorizado' }, { status: 401 })
@@ -67,14 +81,15 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const validated = upsertSchema.parse(body)
 
-    const { error } = await supabase
+    const admin = getAdmin()
+    const { error } = await admin
       .from('agent_config')
       .upsert({
         user_id: user.id,
         agent_slug: validated.agent_slug,
         provider: validated.provider,
         model: validated.model,
-      } as never, { onConflict: 'user_id,agent_slug' })
+      }, { onConflict: 'user_id,agent_slug' })
 
     if (error) throw error
 
@@ -91,7 +106,7 @@ export async function POST(request: NextRequest) {
 // DELETE /api/config/agentes?slug=normativa — reset to default
 export async function DELETE(request: NextRequest) {
   try {
-    const supabase = await createClient()
+    const supabase = await createServerClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       return Response.json({ error: 'No autorizado' }, { status: 401 })
@@ -102,7 +117,8 @@ export async function DELETE(request: NextRequest) {
       return Response.json({ error: 'slug requerido' }, { status: 400 })
     }
 
-    const { error } = await supabase
+    const admin = getAdmin()
+    const { error } = await admin
       .from('agent_config')
       .delete()
       .eq('user_id', user.id)
