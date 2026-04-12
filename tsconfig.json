@@ -48,6 +48,7 @@
   "exclude": [
     "node_modules",
     "easypanel-mcp-server",
-    "supabase-mcp-server"
+    "supabase-mcp-server",
+    "constructionos-mcp-server"
   ]
 }

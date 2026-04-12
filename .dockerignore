@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+.claude
+.mcp.json
+constructionos-mcp-server
+easypanel-mcp-server
+supabase-mcp-server
+claude_desktop_config.json
+GUIABOLIVIANADECONSTRUCCIONDEEDIFICACIONES.pdf
+*.md
