@@ -88,6 +88,7 @@ export async function GET(_request: NextRequest) {
       id: p.id,
       name: p.name,
       description: p.description,
+      baseURL: p.baseURL || (p.id === 'openai' ? 'https://api.openai.com/v1' : p.id === 'anthropic' ? 'https://api.anthropic.com/v1' : undefined),
     }))
 
     return Response.json({ providers: available, allProviders })

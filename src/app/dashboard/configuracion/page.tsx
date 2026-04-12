@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import {
   Key, Plus, Trash2, Check, Loader2, Eye, EyeOff, Shield, ExternalLink,
   Cpu, Building2, Users, UserPlus, Bot, RotateCcw, Save, Pencil, X,
+  Zap, CircleCheck, CircleX, Globe,
 } from 'lucide-react'
 
 // ============================================================
@@ -20,7 +21,7 @@ interface ProviderInfo {
   id: string; name: string; description: string; keyId?: string;
   maskedKey?: string; label?: string; models?: ModelInfo[]; supportsModelFetch?: boolean
 }
-interface AllProvider { id: string; name: string; description: string }
+interface AllProvider { id: string; name: string; description: string; baseURL?: string }
 interface OrgData { id: string; nombre: string; slug: string | null; plan: string | null; created_at: string }
 interface MemberData {
   id: string; user_id: string; email: string; rol: string;
@@ -95,6 +96,9 @@ export default function ConfiguracionPage() {
   const [agentProvider, setAgentProvider] = useState('')
   const [agentModel, setAgentModel] = useState('')
   const [savingAgent, setSavingAgent] = useState(false)
+  const [testingAgent, setTestingAgent] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<Record<string, { ok: boolean; latency?: number; error?: string }>>({})
+
 
   // ============================================================
   // Fetch functions
@@ -305,9 +309,31 @@ export default function ConfiguracionPage() {
       const res = await fetch(`/api/config/agentes?slug=${slug}`, { method: 'DELETE' })
       if (!res.ok) { const err = await res.json(); throw new Error(err.error) }
       setMessage({ type: 'success', text: `${AGENT_LABELS[slug]} restaurado a default` })
+      setTestResult(prev => { const next = { ...prev }; delete next[slug]; return next })
       await fetchAgentConfig()
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Error' })
+    }
+  }
+
+  const handleTestConnection = async (slug: string, provider: string, model: string) => {
+    setTestingAgent(slug)
+    setTestResult(prev => { const next = { ...prev }; delete next[slug]; return next })
+    try {
+      const res = await fetch('/api/config/llm/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, model }),
+      })
+      const data = await res.json()
+      setTestResult(prev => ({ ...prev, [slug]: data }))
+    } catch (err) {
+      setTestResult(prev => ({
+        ...prev,
+        [slug]: { ok: false, error: err instanceof Error ? err.message : 'Error de red' },
+      }))
+    } finally {
+      setTestingAgent(null)
     }
   }
 
@@ -590,6 +616,14 @@ export default function ConfiguracionPage() {
                               {p.label && <Badge variant="secondary" className="text-xs">{p.label}</Badge>}
                             </div>
                             <p className="text-xs text-muted-foreground">{p.description}</p>
+                            {(() => {
+                              const provInfo = allProviders.find(ap => ap.id === p.id)
+                              return provInfo?.baseURL ? (
+                                <p className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                                  <Globe className="w-3 h-3" /> {provInfo.baseURL}
+                                </p>
+                              ) : null
+                            })()}
                             {p.models && p.models.length > 0 && (
                               <button onClick={() => toggleExpanded(p.id)}
                                 className="text-xs text-primary hover:underline flex items-center gap-1 mt-1">
@@ -639,6 +673,38 @@ export default function ConfiguracionPage() {
                     </Card>
                   ))
                 )}
+              </div>
+
+              {/* Available services */}
+              <div className="space-y-3">
+                <h2 className="text-lg font-semibold">Servicios de IA disponibles</h2>
+                <div className="grid gap-2">
+                  {allProviders.map(p => {
+                    const isConfigured = configuredProviders.some(cp => cp.id === p.id)
+                    return (
+                      <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border text-sm">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{p.name}</span>
+                            {isConfigured && <Badge variant="secondary" className="text-[10px]">configurado</Badge>}
+                          </div>
+                          <p className="text-xs text-muted-foreground">{p.description}</p>
+                          {p.baseURL && (
+                            <p className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                              <Globe className="w-3 h-3 flex-shrink-0" /> {p.baseURL}
+                            </p>
+                          )}
+                        </div>
+                        {PROVIDER_LINKS[p.id] && (
+                          <a href={PROVIDER_LINKS[p.id]} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-primary hover:underline flex items-center gap-1 flex-shrink-0 ml-3">
+                            Obtener key <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
 
               {/* Add form */}
@@ -762,34 +828,98 @@ export default function ConfiguracionPage() {
                             {savingAgent ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
                             Guardar
                           </Button>
+                          <Button variant="outline" size="sm"
+                            onClick={() => handleTestConnection(slug, agentProvider, agentModel)}
+                            disabled={testingAgent === slug || !agentProvider || !agentModel}>
+                            {testingAgent === slug
+                              ? <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                              : <Zap className="w-4 h-4 mr-1" />}
+                            Test
+                          </Button>
                           <Button variant="outline" size="sm" onClick={() => setEditingAgent(null)}>Cancelar</Button>
                         </div>
+                        {/* Test result in edit mode */}
+                        {testResult[slug] && (
+                          <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+                            testResult[slug].ok
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-red-50 text-red-700 border border-red-200'
+                          }`}>
+                            {testResult[slug].ok ? (
+                              <>
+                                <CircleCheck className="w-3.5 h-3.5" />
+                                <span>Conexion OK — modelo valido</span>
+                                {testResult[slug].latency && (
+                                  <span className="text-muted-foreground">({testResult[slug].latency}ms)</span>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <CircleX className="w-3.5 h-3.5" />
+                                <span>{testResult[slug].error || 'Error de conexion'}</span>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       /* View mode */
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{AGENT_LABELS[slug] || slug}</span>
-                            {cfg.isCustom && <Badge variant="secondary" className="text-xs">personalizado</Badge>}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{AGENT_LABELS[slug] || slug}</span>
+                              {cfg.isCustom && <Badge variant="secondary" className="text-xs">personalizado</Badge>}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span className="font-medium">{cfg.provider}</span>
+                              <span>/</span>
+                              <span className="font-mono">{cfg.model}</span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span className="font-medium">{cfg.provider}</span>
-                            <span>/</span>
-                            <span className="font-mono">{cfg.model}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => startEditAgent(slug)} title="Editar">
-                            <Pencil className="w-4 h-4" />
-                          </Button>
-                          {cfg.isCustom && (
-                            <Button variant="ghost" size="sm" onClick={() => handleResetAgent(slug)}
-                              title="Restaurar default" className="text-muted-foreground">
-                              <RotateCcw className="w-4 h-4" />
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="sm"
+                              onClick={() => handleTestConnection(slug, cfg.provider, cfg.model)}
+                              disabled={testingAgent === slug}
+                              title="Probar conexion">
+                              {testingAgent === slug
+                                ? <Loader2 className="w-4 h-4 animate-spin" />
+                                : <Zap className="w-4 h-4" />}
                             </Button>
-                          )}
+                            <Button variant="ghost" size="sm" onClick={() => startEditAgent(slug)} title="Editar">
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            {cfg.isCustom && (
+                              <Button variant="ghost" size="sm" onClick={() => handleResetAgent(slug)}
+                                title="Restaurar default" className="text-muted-foreground">
+                                <RotateCcw className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
+                        {/* Test result */}
+                        {testResult[slug] && (
+                          <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${
+                            testResult[slug].ok
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-red-50 text-red-700 border border-red-200'
+                          }`}>
+                            {testResult[slug].ok ? (
+                              <>
+                                <CircleCheck className="w-3.5 h-3.5" />
+                                <span>Conexion exitosa</span>
+                                {testResult[slug].latency && (
+                                  <span className="text-muted-foreground">({testResult[slug].latency}ms)</span>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <CircleX className="w-3.5 h-3.5" />
+                                <span>{testResult[slug].error || 'Error de conexion'}</span>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </CardContent>
