@@ -59,7 +59,7 @@ export async function POST(
     const provider = (validated.provider || 'openai') as LLMProvider
     const model = validated.model || getDefaultModel(provider)
 
-    // Resolve API key: user key → org key → env var
+    // Resolve API key: user key -> org key -> env var
     let apiKey = ''
 
     // 1. User's own key
@@ -101,10 +101,14 @@ export async function POST(
 
     if (!apiKey) {
       return Response.json(
-        { error: `No hay API key para ${provider}. Ve a Configuración para agregar una.` },
+        { error: `No hay API key para ${provider}. Ve a Configuracion para agregar una.` },
         { status: 400 }
       )
     }
+
+    // SSE delimiters
+    const SSE_TAIL = '\n\n'
+    const SSE_DONE = 'data: [DONE]' + SSE_TAIL
 
     // Stream response
     const encoder = new TextEncoder()
@@ -116,20 +120,14 @@ export async function POST(
             { system: systemPrompt, messages, maxTokens: 4096 }
           )
           for await (const text of stream) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}
-
-`))
+            controller.enqueue(encoder.encode('data: ' + JSON.stringify({ text }) + SSE_TAIL))
           }
-          controller.enqueue(encoder.encode('data: [DONE]
-
-'))
+          controller.enqueue(encoder.encode(SSE_DONE))
           controller.close()
         } catch (err) {
-          console.error(`[${agente}] Streaming error:`, err)
+          console.error('[' + agente + '] Streaming error:', err)
           const errorMsg = err instanceof Error ? err.message : 'Error de streaming'
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errorMsg })}
-
-`))
+          controller.enqueue(encoder.encode('data: ' + JSON.stringify({ error: errorMsg }) + SSE_TAIL))
           controller.close()
         }
       },
