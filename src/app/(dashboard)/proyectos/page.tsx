@@ -1,1 +1,5 @@
-// Moved to src/app/dashboard/proyectos/page.tsx
+import { redirect } from 'next/navigation'
+
+export default function DeprecatedProyectos() {
+  redirect('/dashboard/proyectos')
+}

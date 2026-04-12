@@ -1,1 +1,3 @@
-// Moved to src/app/dashboard/proyectos/[id]/page.tsx
+export default function DeprecatedProyectoDetail() {
+  return null
+}
