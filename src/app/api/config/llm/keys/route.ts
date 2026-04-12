@@ -24,44 +24,19 @@ export async function POST(request: NextRequest) {
     // Encrypt the API key
     const { encrypted, iv } = encryptApiKey(validated.api_key)
 
-    // Upsert: one key per provider per user
-    const { data: existing } = await supabase
+    // Upsert: one key per provider per user (atomic, avoids RLS race condition)
+    const { error } = await supabase
       .from('llm_api_keys')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('provider', validated.provider)
-      .single()
+      .upsert({
+        user_id: user.id,
+        provider: validated.provider,
+        api_key_encrypted: encrypted,
+        iv,
+        label: validated.label || null,
+        activo: true,
+      } as never, { onConflict: 'user_id,provider' })
 
-    const existingRow = existing as unknown as { id: string } | null
-
-    if (existingRow) {
-      // Update existing
-      const { error } = await supabase
-        .from('llm_api_keys')
-        .update({
-          api_key_encrypted: encrypted,
-          iv,
-          label: validated.label || null,
-          activo: true,
-        } as never)
-        .eq('id', existingRow.id)
-
-      if (error) throw error
-    } else {
-      // Insert new
-      const { error } = await supabase
-        .from('llm_api_keys')
-        .insert({
-          user_id: user.id,
-          provider: validated.provider,
-          api_key_encrypted: encrypted,
-          iv,
-          label: validated.label || null,
-          activo: true,
-        } as never)
-
-      if (error) throw error
-    }
+    if (error) throw error
 
     return Response.json({ ok: true })
   } catch (error: unknown) {
