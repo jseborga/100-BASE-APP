@@ -29,28 +29,37 @@ ALTER TABLE llm_api_keys ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organiz
 ALTER TABLE organizaciones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE org_miembros ENABLE ROW LEVEL SECURITY;
 
--- Org policies
+-- Helper function: get org IDs for a user (SECURITY DEFINER bypasses RLS, avoids recursion)
+CREATE OR REPLACE FUNCTION get_user_org_ids(uid UUID)
+RETURNS SETOF UUID
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT org_id FROM org_miembros WHERE user_id = uid;
+$$;
+
+-- Org policies (use helper function to avoid recursion)
 DROP POLICY IF EXISTS "org_select" ON organizaciones;
 CREATE POLICY "org_select" ON organizaciones FOR SELECT USING (
-  id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid())
+  id IN (SELECT get_user_org_ids(auth.uid()))
 );
 DROP POLICY IF EXISTS "org_insert" ON organizaciones;
 CREATE POLICY "org_insert" ON organizaciones FOR INSERT WITH CHECK (true);
 DROP POLICY IF EXISTS "org_update" ON organizaciones;
 CREATE POLICY "org_update" ON organizaciones FOR UPDATE USING (
-  id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid() AND rol = 'admin')
+  id IN (SELECT get_user_org_ids(auth.uid()))
 );
 
--- Org members policies
+-- Org members policies (NO self-reference — use direct user_id check only)
 DROP POLICY IF EXISTS "org_miembros_select" ON org_miembros;
 CREATE POLICY "org_miembros_select" ON org_miembros FOR SELECT USING (
   user_id = auth.uid()
-  OR org_id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid())
+  OR org_id IN (SELECT get_user_org_ids(auth.uid()))
 );
 DROP POLICY IF EXISTS "org_miembros_insert" ON org_miembros;
 CREATE POLICY "org_miembros_insert" ON org_miembros FOR INSERT WITH CHECK (
   user_id = auth.uid()
-  OR org_id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid() AND rol = 'admin')
 );
 
 -- Updated proyectos policies (separate per operation)
@@ -63,7 +72,7 @@ DROP POLICY IF EXISTS "proyectos_delete" ON proyectos;
 CREATE POLICY "proyectos_select" ON proyectos FOR SELECT USING (
   propietario_id = auth.uid()
   OR id IN (SELECT proyecto_id FROM proyecto_miembros WHERE usuario_id = auth.uid())
-  OR org_id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid())
+  OR org_id IN (SELECT get_user_org_ids(auth.uid()))
 );
 CREATE POLICY "proyectos_insert" ON proyectos FOR INSERT WITH CHECK (
   propietario_id = auth.uid()
@@ -86,7 +95,7 @@ DROP POLICY IF EXISTS "llm_keys_delete" ON llm_api_keys;
 
 CREATE POLICY "llm_keys_select" ON llm_api_keys FOR SELECT USING (
   user_id = auth.uid()
-  OR org_id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid())
+  OR org_id IN (SELECT get_user_org_ids(auth.uid()))
 );
 CREATE POLICY "llm_keys_insert" ON llm_api_keys FOR INSERT WITH CHECK (
   user_id = auth.uid()
