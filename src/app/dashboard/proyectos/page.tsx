@@ -15,11 +15,6 @@ interface Pais {
   nombre: string
 }
 
-interface OrgMiembro {
-  org_id: string
-  organizaciones: { id: string; nombre: string } | null
-}
-
 interface Proyecto {
   id: string
   nombre: string
@@ -39,7 +34,7 @@ const TIPOLOGIAS = [
   'Residencial Multifamiliar',
   'Comercial',
   'Industrial',
-  'Educaci\u00f3n',
+  'Educación',
   'Salud',
   'Oficinas',
   'Infraestructura Vial',
@@ -62,7 +57,6 @@ export default function ProyectosPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const [userOrgId, setUserOrgId] = useState<string | null>(null)
 
   const [form, setForm] = useState({
     nombre: '',
@@ -74,55 +68,22 @@ export default function ProyectosPage() {
 
   const supabase = createClient()
 
+  // Fetch projects via server-side API (bypasses RLS)
   const fetchProyectos = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      // Get user's org
-      const { data: orgData } = await supabase
-        .from('org_miembros')
-        .select('org_id, organizaciones(id, nombre)')
-        .eq('user_id', user.id)
-        .limit(1)
-
-      const orgRows = (orgData ?? []) as unknown as OrgMiembro[]
-      if (orgRows.length > 0) {
-        setUserOrgId(orgRows[0].org_id)
+      const res = await fetch('/api/proyectos')
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Error al cargar proyectos')
       }
-
-      const { data, error } = await supabase
-        .from('proyectos')
-        .select('*, paises(id, codigo, nombre)')
-        .order('created_at', { ascending: false })
-
-      if (error) throw error
-
-      const rows = (data ?? []) as unknown as Proyecto[]
-      const projectIds = rows.map(p => p.id)
-      const counts: Record<string, number> = {}
-      if (projectIds.length > 0) {
-        const { data: countData } = await supabase
-          .from('proyecto_partidas')
-          .select('proyecto_id')
-          .in('proyecto_id', projectIds)
-
-        const countRows = (countData ?? []) as unknown as { proyecto_id: string }[]
-        countRows.forEach(row => {
-          counts[row.proyecto_id] = (counts[row.proyecto_id] || 0) + 1
-        })
-      }
-
-      setProyectos(rows.map(p => ({
-        ...p,
-        _count_partidas: counts[p.id] || 0,
-      })))
+      const data = await res.json()
+      setProyectos(data)
     } catch (error) {
       console.error('Error fetching proyectos:', error)
+      setFormError(error instanceof Error ? error.message : 'Error al cargar proyectos')
     } finally {
       setIsLoading(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const fetchPaises = useCallback(async () => {
@@ -156,59 +117,50 @@ export default function ProyectosPage() {
     setFormError(null)
   }
 
+  // Save via server-side API
   const handleSave = async () => {
     if (!form.nombre.trim() || !form.pais_id) {
-      setFormError('El nombre y el pa\u00eds son obligatorios')
+      setFormError('El nombre y el país son obligatorios')
       return
     }
     setSaving(true)
     setFormError(null)
 
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        setFormError('No hay sesi\u00f3n activa. Vuelve a iniciar sesi\u00f3n.')
-        setSaving(false)
-        return
-      }
-
       const payload = {
         nombre: form.nombre.trim(),
-        descripcion: form.descripcion.trim() || null,
+        descripcion: form.descripcion.trim() || undefined,
         pais_id: form.pais_id,
-        tipologia: form.tipologia || null,
-        ubicacion: form.ubicacion.trim() || null,
+        tipologia: form.tipologia || undefined,
+        ubicacion: form.ubicacion.trim() || undefined,
       }
 
+      let res: Response
+
       if (editingId) {
-        const { error } = await supabase
-          .from('proyectos')
-          .update(payload as never)
-          .eq('id', editingId)
-        if (error) throw error
+        res = await fetch('/api/proyectos', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editingId, ...payload }),
+        })
       } else {
-        const insertPayload = {
-          ...payload,
-          propietario_id: user.id,
-          estado: 'activo',
-          org_id: userOrgId,
-        }
-        const { error } = await supabase
-          .from('proyectos')
-          .insert(insertPayload as never)
-        if (error) throw error
+        res = await fetch('/api/proyectos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      }
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Error al guardar')
       }
 
       resetForm()
       await fetchProyectos()
-    } catch (error: unknown) {
-      console.error('Error saving proyecto:', error)
-      const msg = error instanceof Error ? error.message : String(error)
-      if (msg.includes('row-level security')) {
-        setFormError('Error de permisos. Verifica que tu sesi\u00f3n est\u00e9 activa.')
-      } else {
-        setFormError(`Error al guardar: ${msg}`)
-      }
+    } catch (error) {
+      console.error('Error saving:', error)
+      setFormError(error instanceof Error ? error.message : 'Error al guardar proyecto')
     } finally {
       setSaving(false)
     }
@@ -216,14 +168,16 @@ export default function ProyectosPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      await supabase.from('proyecto_partidas').delete().eq('proyecto_id', id)
-      await supabase.from('proyecto_miembros').delete().eq('proyecto_id', id)
-      const { error } = await supabase.from('proyectos').delete().eq('id', id)
-      if (error) throw error
+      const res = await fetch(`/api/proyectos?id=${id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error)
+      }
       setDeleteConfirm(null)
       await fetchProyectos()
     } catch (error) {
-      console.error('Error deleting proyecto:', error)
+      console.error('Error deleting:', error)
+      setFormError(error instanceof Error ? error.message : 'Error al eliminar')
     }
   }
 
@@ -271,7 +225,6 @@ export default function ProyectosPage() {
               </Button>
             </div>
 
-            {/* Error message */}
             {formError && (
               <div className="mb-4 p-3 rounded-lg bg-red-50 text-red-800 border border-red-200 text-sm">
                 {formError}
@@ -290,35 +243,35 @@ export default function ProyectosPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="pais">Pa\u00eds *</Label>
+                  <Label htmlFor="pais">País *</Label>
                   <select
                     id="pais"
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={form.pais_id}
                     onChange={e => setForm({ ...form, pais_id: e.target.value })}
                   >
-                    <option value="">Seleccionar pa\u00eds</option>
+                    <option value="">Seleccionar país</option>
                     {paises.map(p => (
                       <option key={p.id} value={p.id}>{p.nombre}</option>
                     ))}
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="tipologia">Tipolog\u00eda</Label>
+                  <Label htmlFor="tipologia">Tipología</Label>
                   <select
                     id="tipologia"
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={form.tipologia}
                     onChange={e => setForm({ ...form, tipologia: e.target.value })}
                   >
-                    <option value="">Seleccionar tipolog\u00eda</option>
+                    <option value="">Seleccionar tipología</option>
                     {TIPOLOGIAS.map(t => (
                       <option key={t} value={t}>{t}</option>
                     ))}
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="ubicacion">Ubicaci\u00f3n</Label>
+                  <Label htmlFor="ubicacion">Ubicación</Label>
                   <Input
                     id="ubicacion"
                     placeholder="Ej: La Paz, Zona Sur"
@@ -328,12 +281,12 @@ export default function ProyectosPage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="descripcion">Descripci\u00f3n</Label>
+                <Label htmlFor="descripcion">Descripción</Label>
                 <textarea
                   id="descripcion"
                   rows={2}
                   className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  placeholder="Descripci\u00f3n breve del proyecto..."
+                  placeholder="Descripción breve del proyecto..."
                   value={form.descripcion}
                   onChange={e => setForm({ ...form, descripcion: e.target.value })}
                 />
@@ -355,7 +308,7 @@ export default function ProyectosPage() {
           <CardContent className="py-4">
             <div className="flex items-center justify-between">
               <p className="text-sm">
-                \u00bfEliminar este proyecto y todas sus partidas asignadas? Esta acci\u00f3n no se puede deshacer.
+                ¿Eliminar este proyecto y todas sus partidas? Esta acción no se puede deshacer.
               </p>
               <div className="flex gap-2 ml-4">
                 <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>Cancelar</Button>
@@ -408,7 +361,7 @@ export default function ProyectosPage() {
                             <span className="flex items-center gap-1">
                               <MapPin className="w-3 h-3" />
                               {pais.nombre}
-                              {proyecto.ubicacion ? ` \u00b7 ${proyecto.ubicacion}` : ''}
+                              {proyecto.ubicacion ? ` · ${proyecto.ubicacion}` : ''}
                             </span>
                           )}
                           {proyecto.tipologia && (

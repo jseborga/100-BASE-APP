@@ -1,11 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { ChatAgente } from '@/components/agentes/chat-agente'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Bot } from 'lucide-react'
+import { Bot, Brain, Scale, Calculator, Layers, DollarSign, Box } from 'lucide-react'
 import type { AgentContext } from '@/lib/anthropic/agents'
 
 interface Pais {
@@ -22,26 +21,69 @@ interface Proyecto {
   paises: Pais | null
 }
 
+const AGENTES = [
+  {
+    id: 'orquestador',
+    nombre: 'Orquestador',
+    descripcion: 'Coordina agentes, prioriza y sintetiza',
+    icono: Brain,
+    color: 'bg-violet-100 text-violet-700',
+    placeholder: 'Ej: Necesito ayuda para planificar las partidas de un edificio de 6 pisos',
+  },
+  {
+    id: 'normativa',
+    nombre: 'Normativa',
+    descripcion: 'NB · RNE · ABNT · CSI · cita artículos exactos',
+    icono: Scale,
+    color: 'bg-blue-100 text-blue-700',
+    placeholder: 'Ej: ¿Cuál es la separación máxima de estribos en columnas según NB?',
+  },
+  {
+    id: 'metrados',
+    nombre: 'Metrados',
+    descripcion: 'Cantidades, volúmenes, interpreta BIM',
+    icono: Calculator,
+    color: 'bg-green-100 text-green-700',
+    placeholder: 'Ej: ¿Cómo calculo el metrado de tarrajeo interior en muros?',
+  },
+  {
+    id: 'partidas',
+    nombre: 'Partidas APU',
+    descripcion: 'Materiales + MO + equipos + subcontratos',
+    icono: Layers,
+    color: 'bg-amber-100 text-amber-700',
+    placeholder: 'Ej: Desglose la partida de muro ladrillo soga e=15cm',
+  },
+  {
+    id: 'presupuesto',
+    nombre: 'Presupuesto',
+    descripcion: 'CD + GG + utilidad + impuestos por país',
+    icono: DollarSign,
+    color: 'bg-emerald-100 text-emerald-700',
+    placeholder: 'Ej: ¿Qué impuestos aplican a la construcción en Bolivia?',
+  },
+  {
+    id: 'bim',
+    nombre: 'BIM/Revit',
+    descripcion: 'Revit 2025 → partidas, Add-in C#',
+    icono: Box,
+    color: 'bg-indigo-100 text-indigo-700',
+    placeholder: 'Ej: ¿Cómo mapeo muros de Revit a partidas de albañilería?',
+  },
+]
+
 export default function AgentesPage() {
-  const supabase = createClient()
   const [proyectos, setProyectos] = useState<Proyecto[]>([])
   const [selectedProyecto, setSelectedProyecto] = useState<Proyecto | null>(null)
+  const [selectedAgente, setSelectedAgente] = useState(AGENTES[0])
   const [isLoading, setIsLoading] = useState(true)
 
   const fetchProyectos = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      const { data, error } = await supabase
-        .from('proyectos')
-        .select('id, nombre, pais_id, tipologia, paises(id, codigo, nombre)')
-        .eq('propietario_id', user.id)
-        .order('created_at', { ascending: false })
-
-      if (error) throw error
-
-      const rows = (data ?? []) as unknown as Proyecto[]
+      const res = await fetch('/api/proyectos')
+      if (!res.ok) throw new Error('Error loading projects')
+      const data = await res.json()
+      const rows = data as Proyecto[]
       setProyectos(rows)
       if (rows.length > 0) setSelectedProyecto(rows[0])
     } catch (error) {
@@ -49,7 +91,6 @@ export default function AgentesPage() {
     } finally {
       setIsLoading(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => { fetchProyectos() }, [fetchProyectos])
@@ -73,13 +114,11 @@ export default function AgentesPage() {
   return (
     <div className="p-8 space-y-6 h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Agentes IA</h1>
-          <p className="text-muted-foreground mt-1">
-            Asistentes especializados para normativa, metrados y presupuestos
-          </p>
-        </div>
+      <div>
+        <h1 className="text-3xl font-bold">Agentes IA</h1>
+        <p className="text-muted-foreground mt-1">
+          6 asistentes especializados para normativa, metrados, partidas, presupuesto y BIM
+        </p>
       </div>
 
       {/* Project selector */}
@@ -96,7 +135,7 @@ export default function AgentesPage() {
               }}
             >
               {proyectos.length === 0 && (
-                <option value="">No hay proyectos</option>
+                <option value="">No hay proyectos — crea uno primero</option>
               )}
               {proyectos.map(p => (
                 <option key={p.id} value={p.id}>
@@ -105,29 +144,48 @@ export default function AgentesPage() {
               ))}
             </select>
             {selectedProyecto?.paises && (
-              <Badge variant="outline">
-                {selectedProyecto.paises.nombre}
-              </Badge>
+              <Badge variant="outline">{selectedProyecto.paises.nombre}</Badge>
             )}
             {selectedProyecto?.tipologia && (
-              <Badge variant="secondary" className="text-xs">
-                {selectedProyecto.tipologia}
-              </Badge>
+              <Badge variant="secondary" className="text-xs">{selectedProyecto.tipologia}</Badge>
             )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Agents grid */}
+      {/* Agent tabs */}
+      <div className="flex gap-2 flex-wrap">
+        {AGENTES.map(agente => {
+          const Icon = agente.icono
+          const isActive = selectedAgente.id === agente.id
+          return (
+            <button
+              key={agente.id}
+              onClick={() => setSelectedAgente(agente)}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                isActive
+                  ? 'border-primary bg-primary/5 text-primary shadow-sm'
+                  : 'border-transparent hover:bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {agente.nombre}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Chat area */}
       {selectedProyecto ? (
-        <div className="flex-1 min-h-0" style={{ height: 'calc(100vh - 320px)' }}>
+        <div className="flex-1 min-h-0" style={{ height: 'calc(100vh - 380px)' }}>
           <ChatAgente
-            agente="normativa"
-            titulo="Agente de Normativa"
-            descripcion="Consulta normas de construcción: NB, RNE, ABNT, CSI. Cita artículos exactos."
-            endpoint="/api/agentes/normativa"
+            key={`${selectedAgente.id}-${selectedProyecto.id}`}
+            agente={selectedAgente.id}
+            titulo={`Agente de ${selectedAgente.nombre}`}
+            descripcion={selectedAgente.descripcion}
+            endpoint={`/api/agentes/${selectedAgente.id}`}
             contexto={buildContext(selectedProyecto)}
-            placeholder="Ej: ¿Cuál es la separación máxima de estribos en columnas según NB?"
+            placeholder={selectedAgente.placeholder}
           />
         </div>
       ) : (
@@ -136,7 +194,7 @@ export default function AgentesPage() {
             <Bot className="w-12 h-12 mx-auto text-muted-foreground" />
             <h2 className="text-lg font-semibold">Sin proyecto seleccionado</h2>
             <p className="text-muted-foreground">
-              Crea un proyecto primero para poder consultar a los agentes IA con contexto
+              Crea un proyecto primero para consultar a los agentes IA con contexto
             </p>
           </div>
         </Card>
