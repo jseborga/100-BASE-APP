@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient, SupabaseClient } from '@supabase/supabase-js'
 import { AGENTS_REGISTRY } from '@/lib/anthropic/agents'
-import type { AgentMessage } from '@/lib/anthropic/agents'
+import type { AgentMessage, PartidaResumen } from '@/lib/anthropic/agents'
 import { agenteRequestSchema } from '@/lib/schemas'
 import { streamLLM, getDefaultModel, decryptApiKey } from '@/lib/llm'
 import type { LLMProvider } from '@/lib/llm'
@@ -58,7 +58,35 @@ export async function POST(
     // Parse and validate body
     const body = await request.json()
     const validated = agenteRequestSchema.parse(body)
-    const systemPrompt = agentDef.buildPrompt(validated.contexto)
+
+    // Build enriched context (AgentContext type, may include partidas)
+    const enrichedContext: import('@/lib/anthropic/agents').AgentContext = {
+      ...validated.contexto,
+    }
+
+    // For orquestador and metrados: enrich context with project partidas
+    if (validated.contexto.proyecto_id && (agente === 'orquestador' || agente === 'metrados')) {
+      const admin = getAdmin()
+      const { data: ppRows } = await admin
+        .from('proyecto_partidas')
+        .select('metrado_manual, metrado_bim, metrado_final, partidas(nombre, unidad, capitulo, partida_localizaciones(codigo_local))')
+        .eq('proyecto_id', validated.contexto.proyecto_id)
+        .order('orden', { ascending: true })
+        .limit(200)
+
+      if (ppRows && ppRows.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        enrichedContext.partidas_actuales = ppRows.map((r: any) => ({
+          nombre: r.partidas?.nombre || '—',
+          unidad: r.partidas?.unidad || '—',
+          capitulo: r.partidas?.capitulo || null,
+          codigo_local: r.partidas?.partida_localizaciones?.[0]?.codigo_local || null,
+          metrado: Number(r.metrado_final ?? r.metrado_manual ?? r.metrado_bim ?? 0),
+        })) as PartidaResumen[]
+      }
+    }
+
+    const systemPrompt = agentDef.buildPrompt(enrichedContext)
 
     // Build messages array
     const messages: { role: 'user' | 'assistant'; content: string }[] = []

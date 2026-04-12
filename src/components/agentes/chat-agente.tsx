@@ -12,6 +12,7 @@ interface ChatAgenteProps {
   endpoint: string
   contexto: AgentContext
   placeholder?: string
+  initialPrompt?: string
 }
 
 export function ChatAgente({
@@ -19,6 +20,7 @@ export function ChatAgente({
   endpoint,
   contexto,
   placeholder = 'Escribe tu consulta...',
+  initialPrompt,
 }: ChatAgenteProps) {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [input, setInput] = useState('')
@@ -43,6 +45,73 @@ export function ChatAgente({
   useEffect(() => {
     textareaRef.current?.focus()
   }, [agente])
+
+  // Auto-send initial prompt if provided
+  const initialSent = useRef(false)
+  useEffect(() => {
+    if (initialPrompt && !initialSent.current && messages.length === 0) {
+      initialSent.current = true
+      setInput(initialPrompt)
+      // Trigger send after a tick so state is set
+      setTimeout(() => {
+        setInput('')
+        // Manually invoke the send logic
+        const msg: AgentMessage = { role: 'user', content: initialPrompt }
+        setMessages([msg, { role: 'assistant', content: '' }])
+        setIsLoading(true)
+        fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mensaje: initialPrompt, contexto, historial: [] }),
+        }).then(async (response) => {
+          if (!response.ok) {
+            const err = await response.json()
+            throw new Error(err.error || 'Error del agente')
+          }
+          const reader = response.body?.getReader()
+          const decoder = new TextDecoder()
+          let content = ''
+          if (reader) {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              const chunk = decoder.decode(value, { stream: true })
+              const lines = chunk.split('\n')
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const data = line.slice(6)
+                  if (data === '[DONE]') break
+                  try {
+                    const parsed = JSON.parse(data)
+                    if (parsed.error) throw new Error(parsed.error)
+                    if (parsed.text) {
+                      content += parsed.text
+                      setMessages(prev => {
+                        const updated = [...prev]
+                        updated[updated.length - 1] = { role: 'assistant', content }
+                        return updated
+                      })
+                    }
+                  } catch (e) {
+                    if (e instanceof Error && e.message !== 'Unexpected end of JSON input') throw e
+                  }
+                }
+              }
+            }
+          }
+        }).catch((error) => {
+          setMessages(prev => {
+            const updated = [...prev]
+            updated[updated.length - 1] = {
+              role: 'assistant',
+              content: `**Error:** ${error instanceof Error ? error.message : 'No se pudo conectar'}`,
+            }
+            return updated
+          })
+        }).finally(() => setIsLoading(false))
+      }, 100)
+    }
+  }, [initialPrompt, endpoint, contexto, messages.length])
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return

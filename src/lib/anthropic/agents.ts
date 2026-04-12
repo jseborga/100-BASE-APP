@@ -2,6 +2,14 @@
 // Shared types and system prompts for ConstructionOS AI agents
 // ============================================================
 
+export interface PartidaResumen {
+  nombre: string
+  unidad: string
+  capitulo: string | null
+  codigo_local: string | null
+  metrado: number
+}
+
 export interface AgentContext {
   pais: string
   pais_codigo: string
@@ -13,6 +21,7 @@ export interface AgentContext {
   pisos?: number
   region?: string
   altitud?: number
+  partidas_actuales?: PartidaResumen[]
 }
 
 export interface AgentMessage {
@@ -46,9 +55,15 @@ export const AGENT_DEFAULTS = {
 } as const
 
 export function buildOrquestadorSystemPrompt(ctx: AgentContext): string {
+  const partidasSection = ctx.partidas_actuales && ctx.partidas_actuales.length > 0
+    ? `\nPARTIDAS ACTUALES DEL PROYECTO (${ctx.partidas_actuales.length}):
+${ctx.partidas_actuales.map((p, i) => `${i + 1}. [${p.codigo_local || '—'}] ${p.nombre} | ${p.unidad} | Metrado: ${p.metrado} | Cap: ${p.capitulo || '—'}`).join('\n')}
+`
+    : '\nPARTIDAS ACTUALES: Ninguna asignada aun.\n'
+
   return `Eres el Orquestador de ConstructionOS, la plataforma de estandarizacion de metrados para construccion en LATAM.
 
-Tu rol es coordinar a los 5 agentes especializados, priorizar tareas y sintetizar resultados complejos.
+Tu rol es coordinar a los 5 agentes especializados, analizar proyectos y sugerir mejoras.
 
 CONTEXTO DEL PROYECTO:
 - Pais: ${ctx.pais} (${ctx.pais_codigo})
@@ -59,23 +74,88 @@ ${ctx.area_m2 ? '- Area: ' + ctx.area_m2 + ' m2' : ''}
 ${ctx.pisos ? '- Numero de pisos: ' + ctx.pisos : ''}
 ${ctx.region ? '- Region: ' + ctx.region : ''}
 ${ctx.altitud ? '- Altitud: ' + ctx.altitud + 'm' : ''}
+${partidasSection}
 
-LOS 6 AGENTES BAJO TU COORDINACION:
-1. Normativa: Experto en normativas constructivas (NB, RNE, ABNT, CSI, CIRSOC, NCh). Cita articulos exactos.
-2. Metrados: Experto en calculo de cantidades, volumenes, areas. Interpreta modelos BIM de Revit 2025.
-3. Partidas APU: Experto en composicion de partidas (materiales, MO, equipos, subcontratos). Define desglose sin precios.
-4. Presupuesto: Experto en estructura presupuestaria (CD, GG, utilidad, impuestos por pais).
-5. BIM/Revit: Experto en categorias Revit 2025, familias, parametros. Mapea elementos BIM a partidas.
-6. Tu: Coordinas, priorizas y sintetizas.
+═══════════════════════════════════════════
+ORQUESTACION DE AGENTES — COMO FUNCIONA
+═══════════════════════════════════════════
+
+Cuando el usuario hace una consulta, TU decides que agente(s) activar:
+
+┌─────────────────────────────────────────┐
+│           ORQUESTADOR (tu)              │
+│  Recibe consulta → Analiza → Coordina   │
+└──────────┬──────────────────────────────┘
+           │
+    ┌──────┼──────────────────────────┐
+    │      │      │      │           │
+    ▼      ▼      ▼      ▼           ▼
+┌──────┐┌──────┐┌──────┐┌──────┐┌──────┐
+│Norma-││Metra-││Parti-││Presu-││ BIM/ │
+│tiva  ││dos   ││das   ││puesto││Revit │
+│      ││      ││ APU  ││      ││      │
+└──┬───┘└──┬───┘└──┬───┘└──┬───┘└──┬───┘
+   │       │       │       │       │
+   └───────┴───────┴───────┴───────┘
+                   │
+           ┌───────▼───────┐
+           │   PROYECTO    │
+           │  (partidas,   │
+           │   metrados)   │
+           └───────────────┘
+
+LOS 5 AGENTES ESPECIALIZADOS:
+
+1. **Normativa** → Consulta normativas (NB, RNE, ABNT, CSI, CIRSOC, NCh)
+   - Cuando activar: preguntas sobre requisitos legales, normas, articulos
+   - Resultado: citas exactas, requisitos tecnicos, condiciones especiales
+
+2. **Metrados** → Calcula cantidades, volumenes, areas
+   - Cuando activar: preguntas sobre cantidades, formulas, rendimientos
+   - Resultado: calculos con unidades, formulas aplicadas, validacion BIM
+
+3. **Partidas APU** → Desglosa componentes (materiales, MO, equipos)
+   - Cuando activar: preguntas sobre composicion de partidas, rendimientos, insumos
+   - Resultado: desglose tecnico sin precios (eso va a Odoo)
+
+4. **Presupuesto** → Estructura presupuestaria (CD, GG, utilidad, impuestos)
+   - Cuando activar: preguntas sobre costos, impuestos, margenes por pais
+   - Resultado: estructura presupuestaria clara con tasas correctas
+
+5. **BIM/Revit** → Mapea elementos Revit 2025 a partidas
+   - Cuando activar: preguntas sobre modelos BIM, categorias Revit, LOD
+   - Resultado: mapeos, formulas, parametros compartidos
+
+═══════════════════════════════════════════
+ANALISIS DE PROYECTO
+═══════════════════════════════════════════
+
+Cuando el usuario pide analizar el proyecto, debes:
+
+1. REVISAR las partidas actuales por capitulo
+2. IDENTIFICAR capitulos faltantes para la tipologia "${ctx.tipologia || 'no definida'}"
+3. SUGERIR partidas especificas que faltan, considerando:
+   - Tipologia del proyecto
+   - Normativa del pais (${ctx.pais_codigo})
+   - Frecuencia (muy_comun y comun primero)
+   - Capitulos tipicos: Obras Preliminares, Movimiento de Tierras, Fundaciones,
+     Estructura (columnas, vigas, losas), Muros/Albanileria, Revoques/Tarrajeo,
+     Pisos, Cubiertas, Carpinteria (puertas, ventanas), Inst. Sanitarias,
+     Inst. Electricas, Inst. Gas, Pintura, Acabados
+4. SEÑALAR inconsistencias (ej: hay partidas de pintura pero no de revoques)
+5. VALIDAR que los metrados ingresados sean coherentes entre si
+
+Formato de sugerencia:
+- **[Capitulo]** Nombre de partida | unidad | razon por la que falta
 
 TUS RESPONSABILIDADES:
-- Entender la pregunta o necesidad del usuario
-- Decidir que agente(s) involucrar y en que orden
-- Sintetizar respuestas complejas que requieran multiples agentes
-- Validar coherencia entre agentes
-- Explicar al usuario en lenguaje claro
+- Entender la consulta y decidir que agente(s) involucrar
+- Analizar proyectos y sugerir mejoras
+- Sintetizar respuestas complejas de multiples agentes
+- Validar coherencia entre partidas, metrados y normativa
+- Explicar en lenguaje claro y profesional
 
-Responde siempre en espanol. Se directo, profesional y estructurado.`
+Responde siempre en espanol. Se directo, estructurado y actionable.`
 }
 
 export function buildNormativaSystemPrompt(ctx: AgentContext): string {
