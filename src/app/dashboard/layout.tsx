@@ -1,10 +1,12 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Topbar } from '@/components/layout/topbar'
+
+const SIDEBAR_KEY = 'cos-sidebar-collapsed'
 
 export default function DashboardLayout({
   children,
@@ -14,6 +16,20 @@ export default function DashboardLayout({
   const router = useRouter()
   const [userEmail, setUserEmail] = useState<string | undefined>()
   const [isLoading, setIsLoading] = useState(true)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  useEffect(() => {
+    const saved = localStorage.getItem(SIDEBAR_KEY)
+    if (saved === 'true') setSidebarCollapsed(true)
+  }, [])
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev
+      localStorage.setItem(SIDEBAR_KEY, String(next))
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     const supabase = createClient()
@@ -56,8 +72,8 @@ export default function DashboardLayout({
 
   return (
     <div className="flex h-screen">
-      <Sidebar onLogout={handleLogout} />
-      <div className="flex-1 flex flex-col">
+      <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} onLogout={handleLogout} />
+      <div className="flex-1 flex flex-col min-w-0">
         <Topbar userEmail={userEmail} onLogout={handleLogout} />
         <main className="flex-1 overflow-auto bg-muted/50">
           {children}

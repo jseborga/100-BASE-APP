@@ -8,9 +8,15 @@ import { Card, CardContent } from '@/components/ui/card'
 import {
   Bot, Brain, Scale, Calculator, Layers, DollarSign, Box,
   MapPin, Building2, ChevronRight, Settings, Search, Zap,
-  ArrowRight, Info, Loader2,
+  ArrowRight, Info, Loader2, PanelRightClose, PanelRightOpen,
 } from 'lucide-react'
 import Link from 'next/link'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import type { AgentContext } from '@/lib/anthropic/agents'
 
 // ============================================================
@@ -148,6 +154,12 @@ export default function AgentesPage() {
   const [showOrchestration, setShowOrchestration] = useState(false)
   const [quickPrompt, setQuickPrompt] = useState<string | null>(null)
   const [chatKey, setChatKey] = useState(0)
+  const [rightCollapsed, setRightCollapsed] = useState(false)
+
+  useEffect(() => {
+    const saved = localStorage.getItem('cos-agents-sidebar')
+    if (saved === 'true') setRightCollapsed(true)
+  }, [])
 
   const fetchData = useCallback(async () => {
     try {
@@ -327,132 +339,234 @@ export default function AgentesPage() {
       </div>
 
       {/* ===== RIGHT SIDEBAR ===== */}
-      <div className="w-72 border-l bg-card flex flex-col">
-        {/* Project selector */}
-        <div className="p-4 border-b space-y-3">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Proyecto</h3>
-          <select
-            className="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            value={selectedProyecto?.id || ''}
-            onChange={e => {
-              const p = proyectos.find(p => p.id === e.target.value)
-              setSelectedProyecto(p || null)
-              setQuickPrompt(null)
-            }}
-          >
-            {proyectos.length === 0 && <option value="">Sin proyectos</option>}
-            {proyectos.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.nombre}
-              </option>
-            ))}
-          </select>
-          {selectedProyecto && (
-            <div className="space-y-1">
-              {selectedProyecto.paises && (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <MapPin className="w-3 h-3" />
-                  {selectedProyecto.paises.nombre}
-                </div>
-              )}
-              {selectedProyecto.tipologia && (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Building2 className="w-3 h-3" />
-                  {selectedProyecto.tipologia}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Agent selector */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 mb-2">
-            Agentes activos ({availableAgents.length})
-          </h3>
-          {availableAgents.map(ag => {
-            const Icon = ag.icono
-            const isActive = selectedAgente === ag.id
-            const modelShort = ag.model.split('/').pop() || ag.model
-            return (
-              <button
-                key={ag.id}
-                onClick={() => { setSelectedAgente(ag.id); setQuickPrompt(null) }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all ${
-                  isActive
-                    ? 'bg-primary/10 border border-primary/20'
-                    : 'hover:bg-muted border border-transparent'
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${ag.color}`}>
-                  <Icon className="w-4 h-4" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-medium truncate ${isActive ? 'text-primary' : ''}`}>
-                    {ag.nombre}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground truncate">{modelShort}</p>
-                </div>
-                {isActive && <ChevronRight className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
-              </button>
-            )
-          })}
-
-          {/* Show unconfigured agents */}
-          {Object.keys(AGENT_META).filter(slug => !agentConfig[slug]?.isCustom).length > 0 && (
-            <>
-              <div className="pt-3 pb-1">
-                <h3 className="text-xs font-semibold text-muted-foreground/50 uppercase tracking-wider px-1">
-                  Sin configurar
-                </h3>
-              </div>
-              {Object.entries(AGENT_META)
-                .filter(([slug]) => !agentConfig[slug]?.isCustom)
-                .map(([slug, ag]) => {
-                  const Icon = ag.icono
-                  return (
-                    <div
-                      key={slug}
-                      className="w-full flex items-center gap-3 px-3 py-2 rounded-lg opacity-40"
+      <TooltipProvider delayDuration={0}>
+        <div className={`border-l bg-card flex flex-col transition-all duration-200 ${rightCollapsed ? 'w-14' : 'w-72'}`}>
+          {/* Toggle + Project selector */}
+          <div className={`border-b ${rightCollapsed ? 'p-2' : 'p-4 space-y-3'}`}>
+            {rightCollapsed ? (
+              <div className="flex flex-col items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => { setRightCollapsed(false); localStorage.setItem('cos-agents-sidebar', 'false') }}
+                      className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground"
                     >
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-muted`}>
-                        <Icon className="w-4 h-4 text-muted-foreground" />
+                      <PanelRightOpen className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left">Expandir panel</TooltipContent>
+                </Tooltip>
+                {selectedProyecto && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center text-[10px] font-bold text-primary">
+                        {selectedProyecto.nombre.slice(0, 2).toUpperCase()}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm truncate">{ag.nombre}</p>
-                        <p className="text-[10px] text-muted-foreground">No configurado</p>
-                      </div>
-                    </div>
-                  )
-                })}
-            </>
-          )}
-        </div>
-
-        {/* Agent info + config link */}
-        <div className="p-3 border-t space-y-2">
-          {currentAgent && currentConfig && (
-            <div className="p-2.5 rounded-lg bg-muted/50 space-y-1.5">
-              <p className="text-[11px] font-medium">{currentAgent.nombre}</p>
-              <p className="text-[10px] text-muted-foreground leading-relaxed">{currentAgent.rol}</p>
-              <div className="flex items-center gap-1.5 pt-1">
-                <Badge variant="outline" className="text-[9px] px-1.5 py-0">
-                  {currentConfig.provider}
-                </Badge>
-                <span className="text-[9px] text-muted-foreground truncate">
-                  {currentConfig.model.split('/').pop()}
-                </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      <p className="font-medium">{selectedProyecto.nombre}</p>
+                      {selectedProyecto.paises && <p className="text-xs opacity-70">{selectedProyecto.paises.nombre}</p>}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
               </div>
-            </div>
-          )}
-          <Link href="/dashboard/configuracion" className="block">
-            <Button variant="ghost" size="sm" className="w-full gap-1.5 text-xs text-muted-foreground">
-              <Settings className="w-3 h-3" />
-              Configurar agentes
-            </Button>
-          </Link>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Proyecto</h3>
+                  <button
+                    onClick={() => { setRightCollapsed(true); localStorage.setItem('cos-agents-sidebar', 'true') }}
+                    className="p-1 rounded-md hover:bg-muted transition-colors text-muted-foreground"
+                  >
+                    <PanelRightClose className="w-4 h-4" />
+                  </button>
+                </div>
+                <select
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={selectedProyecto?.id || ''}
+                  onChange={e => {
+                    const p = proyectos.find(p => p.id === e.target.value)
+                    setSelectedProyecto(p || null)
+                    setQuickPrompt(null)
+                  }}
+                >
+                  {proyectos.length === 0 && <option value="">Sin proyectos</option>}
+                  {proyectos.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre}
+                    </option>
+                  ))}
+                </select>
+                {selectedProyecto && (
+                  <div className="space-y-1">
+                    {selectedProyecto.paises && (
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <MapPin className="w-3 h-3" />
+                        {selectedProyecto.paises.nombre}
+                      </div>
+                    )}
+                    {selectedProyecto.tipologia && (
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Building2 className="w-3 h-3" />
+                        {selectedProyecto.tipologia}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Agent selector */}
+          <div className={`flex-1 overflow-y-auto space-y-1 ${rightCollapsed ? 'p-1.5' : 'p-3'}`}>
+            {!rightCollapsed && (
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1 mb-2">
+                Agentes activos ({availableAgents.length})
+              </h3>
+            )}
+            {availableAgents.map(ag => {
+              const Icon = ag.icono
+              const isActive = selectedAgente === ag.id
+
+              if (rightCollapsed) {
+                return (
+                  <Tooltip key={ag.id}>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => { setSelectedAgente(ag.id); setQuickPrompt(null) }}
+                        className={`w-full flex items-center justify-center p-2 rounded-lg transition-all ${
+                          isActive
+                            ? 'bg-primary/10 border border-primary/20'
+                            : 'hover:bg-muted border border-transparent'
+                        }`}
+                      >
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${ag.color}`}>
+                          <Icon className="w-4 h-4" />
+                        </div>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      <p className="font-medium">{ag.nombre}</p>
+                      <p className="text-xs opacity-70">{ag.desc}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )
+              }
+
+              const modelShort = ag.model.split('/').pop() || ag.model
+              return (
+                <button
+                  key={ag.id}
+                  onClick={() => { setSelectedAgente(ag.id); setQuickPrompt(null) }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all ${
+                    isActive
+                      ? 'bg-primary/10 border border-primary/20'
+                      : 'hover:bg-muted border border-transparent'
+                  }`}
+                >
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${ag.color}`}>
+                    <Icon className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-medium truncate ${isActive ? 'text-primary' : ''}`}>
+                      {ag.nombre}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground truncate">{modelShort}</p>
+                  </div>
+                  {isActive && <ChevronRight className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                </button>
+              )
+            })}
+
+            {/* Show unconfigured agents */}
+            {!rightCollapsed && Object.keys(AGENT_META).filter(slug => !agentConfig[slug]?.isCustom).length > 0 && (
+              <>
+                <div className="pt-3 pb-1">
+                  <h3 className="text-xs font-semibold text-muted-foreground/50 uppercase tracking-wider px-1">
+                    Sin configurar
+                  </h3>
+                </div>
+                {Object.entries(AGENT_META)
+                  .filter(([slug]) => !agentConfig[slug]?.isCustom)
+                  .map(([slug, ag]) => {
+                    const Icon = ag.icono
+                    return (
+                      <div
+                        key={slug}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-lg opacity-40"
+                      >
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-muted">
+                          <Icon className="w-4 h-4 text-muted-foreground" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm truncate">{ag.nombre}</p>
+                          <p className="text-[10px] text-muted-foreground">No configurado</p>
+                        </div>
+                      </div>
+                    )
+                  })}
+              </>
+            )}
+            {rightCollapsed && Object.entries(AGENT_META)
+              .filter(([slug]) => !agentConfig[slug]?.isCustom)
+              .map(([slug, ag]) => {
+                const Icon = ag.icono
+                return (
+                  <Tooltip key={slug}>
+                    <TooltipTrigger asChild>
+                      <div className="w-full flex items-center justify-center p-2 rounded-lg opacity-30">
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-muted">
+                          <Icon className="w-4 h-4 text-muted-foreground" />
+                        </div>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      <p>{ag.nombre}</p>
+                      <p className="text-xs opacity-70">No configurado</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )
+              })}
+          </div>
+
+          {/* Agent info + config link */}
+          <div className={`border-t ${rightCollapsed ? 'p-1.5' : 'p-3 space-y-2'}`}>
+            {!rightCollapsed && currentAgent && currentConfig && (
+              <div className="p-2.5 rounded-lg bg-muted/50 space-y-1.5">
+                <p className="text-[11px] font-medium">{currentAgent.nombre}</p>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">{currentAgent.rol}</p>
+                <div className="flex items-center gap-1.5 pt-1">
+                  <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                    {currentConfig.provider}
+                  </Badge>
+                  <span className="text-[9px] text-muted-foreground truncate">
+                    {currentConfig.model.split('/').pop()}
+                  </span>
+                </div>
+              </div>
+            )}
+            {rightCollapsed ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link href="/dashboard/configuracion" className="block">
+                    <Button variant="ghost" size="icon" className="w-full h-9 text-muted-foreground">
+                      <Settings className="w-4 h-4" />
+                    </Button>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent side="left">Configurar agentes</TooltipContent>
+              </Tooltip>
+            ) : (
+              <Link href="/dashboard/configuracion" className="block">
+                <Button variant="ghost" size="sm" className="w-full gap-1.5 text-xs text-muted-foreground">
+                  <Settings className="w-3 h-3" />
+                  Configurar agentes
+                </Button>
+              </Link>
+            )}
+          </div>
         </div>
-      </div>
+      </TooltipProvider>
     </div>
   )
 }
