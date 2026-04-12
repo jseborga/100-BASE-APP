@@ -1,153 +1,252 @@
-# base-app ConstructionOS
+# base-app — ConstructionOS
+> Plataforma de estandarización de metrados para construcción · LATAM · BIM-driven
 
-Plataforma de estandarizacion de metrados para construccion. LATAM. BIM-driven.
+---
 
-## Mision del sistema
+## 🎯 Misión del sistema
 
-ConstructionOS es un motor de estandarizacion de metrados que:
-1. Mantiene un catalogo master de partidas de construccion por pais y normativa
-2. Permite componer planillas de metrados para proyectos especificos (asistido por IA)
-3. Mapea elementos BIM de Revit 2025 a partidas automaticamente via Add-in C#
+**ConstructionOS no es un software de APUs.** Es un motor de estandarización de metrados que:
+1. Mantiene un catálogo master de partidas de construcción por país y normativa
+2. Permite componer planillas de metrados para proyectos específicos (asistido por IA)
+3. Mapea elementos BIM de Revit 2025 a partidas automáticamente via Add-in C#
 4. Exporta planillas estandarizadas a Odoo, S10, Excel u otro software APU
 
-## Arquitectura
+**El APU lo hace quien quiera en su herramienta. Nosotros estandarizamos el input.**
 
-### Stack tecnologico
-- Next.js 15 (TypeScript) - frontend + API Routes
-- Supabase self-hosted - PostgreSQL 17 + Auth + Storage + Realtime
-- n8n - automatizacion y puente con Odoo
-- Anthropic SDK - 6 agentes IA especializados
-- Tailwind CSS + shadcn/ui - componentes UI
-- TanStack Query - estado del servidor
-- Zod - validacion de payloads (critico para Add-in Revit)
+---
+
+## 🏗 Arquitectura — decisiones tomadas
+
+### Principio central
+- Catálogo master → composición dinámica por proyecto → exportación
+- Las partidas son agnósticas al país. La localización (código, norma, referencia) es una capa separada
+- Los proyectos nunca duplican partidas — solo referencian el catálogo via `proyecto_partidas`
+
+### Stack tecnológico
+```
+Next.js 15 (TypeScript)     ← frontend + API Routes (un solo servicio)
+Supabase self-hosted         ← PostgreSQL 17 + Auth + Storage + Realtime
+n8n                          ← automatización y puente con Odoo
+Anthropic SDK                ← 6 agentes IA especializados
+Tailwind CSS + shadcn/ui     ← componentes UI
+TanStack Query               ← estado del servidor
+Zod                          ← validación de payloads (crítico para Add-in Revit)
+```
 
 ### Infraestructura EasyPanel
 ```
-Proyecto "odoo-bolivia" - separado, ya existe
+Proyecto "odoo-bolivia"      ← separado, ya existe
   └── odoo + odoo-db
 
-Proyecto "base-app" - este repo
-  ├── supabase (docker-compose oficial)
+Proyecto "base-app"          ← este repo
+  ├── supabase (stack completo docker-compose oficial)
   ├── next-app (Dockerfile)
   └── n8n
 ```
 
-## Base de datos
+### Deploy automático
+- Repo GitHub: `jseborga/100-BASE-APP` (privado, branch `main`)
+- EasyPanel proyecto `base`, servicio `app` → auto-deploy en cada `git push`
+- URL producción: `https://base-app.q8waob.easypanel.host`
+- Supabase: `https://base-supabase.q8waob.easypanel.host`
 
-15 tablas principales:
-1. paises - BO, PE, BR, US, AR, CL, CO, EC, PY, UY, MX
-2. estandares - NB, RNE, ABNT, CSI, CIRSOC, NCh
-3. divisiones - capitulos de cada estandar
-4. tags - vocabulario IA (70 tags en 7 dimensiones)
-5. partidas - catalogo master (~111 Bolivia, crece hacia 2000+)
-6. partida_tags - N:M catalogo ↔ tags
-7. partida_localizaciones - codigo local por normativa
-8. revit_categorias - 12 categorias Revit 2025
-9. revit_mapeos - categoria → partida con formula
-10. proyectos - instancias de uso del catalogo
-11. proyecto_partidas - composicion dinamica
-12. proyecto_miembros - multiusuario con roles
-13. bim_importaciones - historial de exports Revit
-14. bim_elementos - elementos individuales del modelo
-15. partida_sugerencias - cola de nuevas partidas via IA
+---
 
-## Sistema de tags
+## 🗄 Base de datos — schema Supabase
 
-7 dimensiones, de mas transversal a mas particular:
-1. tipo_proyecto - residencial_multifamiliar, remodelacion_comercial, civil_vial...
-2. fase - preliminares, estructura, acabados_interiores...
-3. frecuencia - muy_comun, comun, especial, raro
-4. especialidad - esp_civil, esp_estructuras, esp_arquitectura...
-5. pais - BO, PE, BR, US, AR, CL, universal
-6. region - altura_sobre_3500m, sismico_alto, tropical_amazonica...
-7. origen_bim - revit_mapped, formula_area, formula_volume, solo_manual
+### Grupos de tablas (15 tablas, orden de ejecución):
+```
+1. paises              → BO, PE, BR, US, AR, CL, CO, EC, PY, UY, MX
+2. estandares          → NB, RNE, ABNT, CSI MasterFormat, CIRSOC, NCh
+3. divisiones          → capítulos de cada estándar
+4. tags                → vocabulario IA (70 tags en 7 dimensiones)
+5. partidas            → catálogo master (~111 Bolivia, crece hacia 2000+)
+6. partida_tags        → N:M catálogo ↔ tags (707 rows Bolivia)
+7. partida_localizaciones → código local por normativa por partida
+8. revit_categorias    → 12 categorías Revit 2025
+9. revit_mapeos        → categoría → partida con fórmula de metrado
+10. proyectos          → instancias de uso del catálogo
+11. proyecto_partidas  → composición dinámica (proyecto + partida + metrado)
+12. proyecto_miembros  → multiusuario con roles
+13. bim_importaciones  → historial de exports de Revit
+14. bim_elementos      → elementos individuales del modelo BIM
+15. partida_sugerencias → cola de nuevas partidas via IA
+```
 
-## Los 6 agentes IA
+### Seeds ejecutados (db/seeds/):
+- `01_paises.sql` — 11 países LATAM + EEUU
+- `02_estandares.sql` — NB (BO), RNE (PE), ABNT (BR), CSI (US), CIRSOC (AR), NCh (CL)
+- `03_divisiones.sql` — 47 capítulos por estándar
+- `04_tags.sql` — 70 tags en 7 dimensiones
+- `05_partidas_bo.sql` — 111 partidas Bolivia (Edificio Multifamiliar)
+- `06_partida_tags_bo.sql` — 707 relaciones partida↔tag
+
+### Estado de seeds por país:
+- ✅ Bolivia — completo (16 capítulos, 111 partidas)
+- 🔄 Perú — pendiente (70% de partidas reutilizables, cambia localización)
+- ⏳ Brasil, Argentina, Chile, EEUU — pendiente
+
+---
+
+## 🏷 Sistema de tags (vocabulario del agente IA)
+
+Tabla `tags` con columnas: `id`, `dimension`, `valor`, `descripcion`.
+
+7 dimensiones, de más transversal a más particular:
+```
+1. tipo_proyecto   → residencial_multifamiliar, remodelacion_comercial, civil_vial...
+2. fase            → preliminares, estructura, acabados_interiores, instalaciones_sanitarias...
+3. frecuencia      → muy_comun, comun, especial, raro
+4. especialidad    → esp_civil, esp_estructuras, esp_arquitectura, esp_sanitarias...
+5. pais            → BO, PE, BR, US, AR, CL, universal
+6. region          → altura_sobre_3500m, sismico_alto, tropical_amazonica...
+7. origen_bim      → revit_mapped, formula_area, formula_volume, solo_manual
+```
+
+El agente filtra: `tipo_proyecto + fase + frecuencia → sugerencia ordenada de partidas`
+
+---
+
+## 🤖 Los 6 agentes IA
 
 Cada agente = llamada a Claude API con system prompt especializado.
-Contexto compartido: {pais, tipologia, proyecto, normativa}
+El contexto compartido en cada llamada: `{pais, tipologia, proyecto, normativa}`.
 
-1. Orquestador - coordina, prioriza, sintetiza
-2. Normativa - NB, RNE, ABNT, CSI, cita articulos exactos
-3. Metrados - cantidades, volumenes, interpreta BIM
-4. Partidas APU - desglose materiales + MO + equipos
-5. Presupuesto - CD + GG + utilidad + impuestos por pais
-6. BIM/Revit - categorias Revit 2025 → partidas, Add-in C# API
+```
+1. Orquestador     → coordina, prioriza, sintetiza
+2. Normativa       → NB · RNE · ABNT · CSI · cita artículos exactos
+3. Metrados        → cantidades, volúmenes, interpreta BIM
+4. Partidas APU    → desglose materiales + MO + equipos + subcontratos
+5. Presupuesto     → CD + GG + utilidad + impuestos por país
+6. BIM/Revit       → categorías Revit 2025 → partidas, Add-in C# API
+```
 
-## Mapeo Revit 2025
+---
 
-12 categorias activas:
-- Walls → Area (muros, tarrajeo, pintura)
-- Structural Columns → Volume/Length (concreto, encofrado, acero)
-- Structural Framing → Volume (vigas, encofrado, acero)
-- Floors → Area (losa, piso, contrapiso)
-- Ceilings → Area (cielo raso, pintura)
-- Roofs → Area (impermeabilizacion, cobertura)
-- Doors → Count (puertas, marcos)
-- Windows → Area/Count (ventanas, vidrios)
-- Stairs → Area (escaleras, pasamanos)
-- Railings → Length (barandas)
-- Plumbing Fixtures → Count (aparatos sanitarios)
-- Electrical Fixtures → Count (salidas, tableros)
+## 🏗 Mapeo Revit 2025
 
-## Integraciones
+Tabla `revit_categorias` + `revit_mapeos` (con `formula`, `parametro_principal`, `prioridad`).
 
-### Revit Add-in (C# - componente desktop separado)
-- Extrae familias/tipos/parametros del modelo
+12 categorías activas con fórmulas de metrado:
+```
+Walls              → Area · muros, tarrajeo, pintura
+Structural Columns → Volume/Length · concreto, encofrado, acero
+Structural Framing → Volume · vigas, encofrado, acero
+Floors             → Area · losa, piso, contrapiso
+Ceilings           → Area · cielo raso, pintura
+Roofs              → Area · impermeabilización, cobertura
+Doors              → Count · puertas, marcos
+Windows            → Area/Count · ventanas, vidrios
+Stairs             → Area · escaleras, pasamanos
+Railings           → Length · barandas
+Plumbing Fixtures  → Count · aparatos sanitarios, tuberías
+Electrical Fixtures→ Count · salidas, tableros
+```
+
+Fórmulas ejemplo:
+- `Walls → tarrajeo interior`: `(Area - OpeningsArea) * 1.05`
+- `Structural Columns → acero`: `Volume * 78.5` (kg/m³ promedio)
+- `Floors → ladrillo losa`: `Area / 0.09` (unidades por m²)
+
+---
+
+## 🔗 Integraciones
+
+### Revit Add-in (C# — componente desktop separado)
+- Extrae familias/tipos/parámetros del modelo
 - POST JSON a `/api/bim/import` (Next.js API Route)
-- Recibe write-back de codigos de partida como parametros compartidos
+- Recibe write-back de códigos de partida como parámetros compartidos
 
-### Odoo Bolivia (via n8n, nunca conexion DB directa)
+### Odoo Bolivia (vía n8n, nunca conexión DB directa)
 - ConstructionOS exporta planilla JSON confirmada
-- n8n recibe webhook → llama API Odoo → crea lineas de presupuesto
+- n8n recibe webhook → llama API Odoo → crea líneas de presupuesto
 - Odoo puede devolver precios de insumos → ConstructionOS los muestra como referencia
 
 ### Supabase MCP (Claude Code)
 - Permite queries directas a la BD desde Claude Code
-- Util para verificar seeds, correr migraciones, inspeccionar datos
+- Útil para verificar seeds, correr migraciones, inspeccionar datos
 
-## Estructura del repo
+---
+
+## 📁 Estructura del repo (actual en GitHub)
 
 ```
-base-app/
-├── CLAUDE.md                    - este archivo
-├── .env.example                 - variables sin valores reales
+100-BASE-APP/
+├── CLAUDE.md                    ← este archivo
 ├── .gitignore
-├── Dockerfile                   - Next.js app
-├── middleware.ts                - Supabase session management
+├── Dockerfile                   ← Next.js standalone build (multi-stage)
+├── next.config.ts               ← output: 'standalone', ignoreBuildErrors: true (temporal)
+├── package.json
+├── tailwind.config.ts
+├── tsconfig.json
 ├── db/
-│   ├── schema.sql               - CREATE TABLE completo
-│   └── seeds/
-│       ├── 01_paises.sql
-│       ├── 02_estandares.sql
-│       ├── 03_divisiones.sql
-│       ├── 04_tags.sql
-│       ├── 05_partidas_bo.sql   - 111 partidas Bolivia
-│       └── 06_partida_tags_bo.sql - ~900 relaciones
+│   ├── schema.sql               ← CREATE TABLE completo (15 tablas, ejecutado)
+│   ├── seeds/
+│   │   ├── 01_paises.sql        ← 11 países (ejecutado)
+│   │   ├── 02_estandares.sql    ← 6 estándares (ejecutado)
+│   │   ├── 03_divisiones.sql    ← 47 divisiones (ejecutado)
+│   │   ├── 04_tags.sql          ← 70 tags (ejecutado)
+│   │   ├── 05_partidas_bo.sql   ← 111 partidas Bolivia (ejecutado)
+│   │   └── 06_partida_tags_bo.sql ← 707 relaciones (ejecutado)
+│   └── migrations/              ← cambios futuros al schema
 ├── src/
 │   ├── app/
-│   │   ├── (dashboard)/         - rutas protegidas
-│   │   ├── (auth)/              - login layout
-│   │   ├── api/
-│   │   │   ├── health/
-│   │   │   └── bim/import/
-│   │   ├── layout.tsx
-│   │   ├── page.tsx             - redirect a /dashboard
-│   │   └── globals.css
+│   │   ├── page.tsx             ← redirect('/dashboard')
+│   │   ├── layout.tsx           ← root layout (globals.css, fonts)
+│   │   ├── dashboard/           ← rutas protegidas (layout con sidebar + auth)
+│   │   │   ├── layout.tsx       ← sidebar + topbar + auth check
+│   │   │   ├── page.tsx         ← panel de control con stats
+│   │   │   ├── proyectos/       ← lista + detalle [id]
+│   │   │   ├── catalogo/        ← browser de partidas con búsqueda
+│   │   │   └── configuracion/   ← settings de empresa
+│   │   ├── (dashboard)/         ← DEPRECADO, redirigen a /dashboard/
+│   │   ├── (auth)/login/        ← login con Supabase Auth
+│   │   └── api/
+│   │       ├── bim/import/      ← POST: recibe payload del Add-in Revit
+│   │       └── health/          ← GET: healthcheck
 │   ├── components/
-│   │   ├── ui/                  - shadcn components
-│   │   ├── layout/              - sidebar, topbar
-│   │   └── providers.tsx
-│   ├── lib/
-│   │   ├── supabase/            - client, server, middleware
-│   │   ├── schemas/             - Zod validation
-│   │   └── utils.ts
-│   └── types/
-│       └── database.ts          - Supabase types
-└── package.json
+│   │   ├── layout/              ← sidebar.tsx, topbar.tsx
+│   │   └── ui/                  ← shadcn: button, card, input, label, badge
+│   ├── types/
+│   │   └── database.ts          ← tipos generados de Supabase (15 tablas, Row/Insert/Update)
+│   └── lib/
+│       ├── supabase/            ← client.ts, server.ts, middleware.ts
+│       ├── schemas/             ← Zod: login, proyecto, bimImport, partidaSugerencia
+│       └── utils.ts             ← cn() helper para tailwind
+├── middleware.ts                 ← auth redirect: /dashboard ↔ /login
+└── README.md
 ```
 
-## Variables de entorno
+---
+
+## ⚡ Progreso y próximos pasos
+
+### Completado
+```
+[x] 1. Crear repo GitHub "100-BASE-APP" (privado)
+[x] 2. Levantar Supabase en EasyPanel (docker-compose oficial)
+[x] 3. Ejecutar schema.sql en Supabase (15 tablas, 11 índices, 6 triggers, RLS)
+[x] 4. Ejecutar seeds 01→06 en orden (11 países, 6 estándares, 47 div, 70 tags, 111 partidas, 707 tags)
+[x] 5. Verificar datos con Supabase MCP
+[x] 6. Crear proyecto Next.js 15 base con auth de Supabase (@supabase/ssr)
+[x] 7. Conectar a EasyPanel con auto-deploy desde GitHub (Dockerfile multi-stage)
+[x] 8. Implementar API Route /api/bim/import (con validación Zod)
+[x] 9. Generar tipos TypeScript de Supabase (database.ts con 15 tablas)
+```
+
+### Pendiente (orden)
+```
+[ ] 10. Desactivar ignoreBuildErrors (migrar pages a tipos Database)
+[ ] 11. Implementar CRUD completo de proyectos (crear, editar, eliminar)
+[ ] 12. Implementar agentes IA (empezar por Normativa y Metrados)
+[ ] 13. Agregar partidas Perú (reutilizar catálogo BO)
+[ ] 14. Conectar n8n para exportación a Odoo
+[ ] 15. Implementar modo importación Excel
+```
+
+---
+
+## 🔑 Variables de entorno necesarias
 
 ```env
 # Supabase
@@ -165,27 +264,128 @@ ODOO_USER=
 ODOO_PASSWORD=
 
 # App
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-NODE_ENV=development
+NEXT_PUBLIC_APP_URL=
 ```
 
-## Principios de diseño
+---
 
-1. El catalogo nunca se duplica - `proyecto_partidas` solo referencia
-2. Tags son el lenguaje del agente - agregar tags antes de agregar logica
-3. APU es de Odoo - ConstructionOS no calcula precios, solo metrados
-4. Supabase y Odoo nunca comparten DB - solo API/n8n
-5. El Add-in Revit es el unico componente desktop - todo lo demas es web
-6. Nuevas partidas pasan por `partida_sugerencias` - nunca directo al catalogo
+## 📚 Librería de partidas — cómo funciona y cómo se usa
 
-## Proximos pasos
+### Concepto central: catálogo vivo + composición dinámica
 
-- [ ] 1. Crear repo GitHub "base-app" (privado) ✓
-- [ ] 2. Levantar Supabase en EasyPanel (docker-compose oficial)
-- [ ] 3. Ejecutar schema.sql en Supabase
-- [ ] 4. Ejecutar seeds 01→06 en orden
-- [ ] 5. Verificar datos con Supabase Studio
-- [ ] 6. Conectar a EasyPanel con auto-deploy desde GitHub
-- [ ] 7. Implementar API Route /api/bim/import
-- [ ] 8. Implementar agentes IA (empezar por Normativa y Metrados)
-- [ ] 9. Agregar partidas Peru (reutilizar catalogo BO)
+El sistema tiene dos capas completamente separadas:
+
+```
+CAPA 1 — Catálogo master (global, permanente)
+  └── Todas las partidas posibles de construcción
+  └── Agnósticas al país — "Muro ladrillo soga e=15cm"
+  └── Crece con el tiempo, nunca se borra, solo se depreca
+
+CAPA 2 — Composición de proyecto (local, dinámica)
+  └── Selección específica del catálogo para UN proyecto
+  └── Con metrados calculados o ingresados
+  └── Referencia el catálogo, nunca lo duplica
+  └── Vive en: proyecto_partidas
+```
+
+### La partida en el catálogo vs en el proyecto
+
+```
+partidas (catálogo)                    proyecto_partidas (uso)
+─────────────────────                  ────────────────────────
+id                                     proyecto_id → proyectos
+nombre: "Muro ladrillo soga"  ←FK─    partida_id  → partidas
+descripcion                            cantidad: 1
+unidad: m²                             metrado_manual: 342.5
+tipo: obra                             metrado_bim: null
+capitulo: "Muros y Tabiques"           metrado_final: 342.5
+es_compuesta: false                    notas: "Piso 1 al 6"
+partida_padre_id: null                 orden: 1
+```
+
+Una partida del catálogo puede estar en 1000 proyectos distintos.
+Cada proyecto tiene su propia fila en `proyecto_partidas` con su propio metrado.
+
+### Localización por normativa (misma partida, distinto país)
+
+Tabla `partida_localizaciones` (columnas: partida_id, estandar_id, codigo_local, referencia_norma):
+```
+partida: "Muro ladrillo soga e=15cm"
+│
+├── Bolivia (estandar: NB)
+│   codigo_local: 05.01
+│   referencia_norma: "NB-1225002 Art.3"
+│
+├── Perú (estandar: RNE)
+│   codigo_local: 04.01.01
+│   referencia_norma: "RNE E.070"
+│
+├── Brasil (estandar: ABNT)
+│   codigo_local: 04.01
+│   referencia_norma: "ABNT NBR 15270"
+│
+└── EEUU (estandar: CSI)
+    codigo_local: 04 21 13
+    referencia_norma: "CSI 04 20 00"
+```
+
+### Cómo el agente filtra el catálogo por proyecto
+
+Cuando el usuario crea un proyecto, el agente recibe:
+```json
+{
+  "tipo_proyecto": "residencial_multifamiliar",
+  "pais": "BO",
+  "region": "La Paz",
+  "m2": 850,
+  "num_pisos": 6
+}
+```
+
+El agente traduce esto a tags y filtra:
+```sql
+SELECT p.* FROM partidas p
+JOIN partida_tags pt ON p.id = pt.partida_id
+JOIN tags t ON pt.tag_id = t.id
+WHERE t.valor IN (
+  'residencial_multifamiliar',  -- dimension: tipo_proyecto
+  'BO',                          -- dimension: pais
+  'altura_sobre_3500m',          -- dimension: region
+  'sismico_medio'                -- dimension: region
+)
+GROUP BY p.id
+HAVING COUNT(DISTINCT t.valor) >= 2
+ORDER BY
+  MAX(CASE WHEN t.valor = 'muy_comun' THEN 1 ELSE 0 END) DESC,
+  MAX(CASE WHEN t.valor = 'comun'     THEN 1 ELSE 0 END) DESC
+```
+
+### Flujos de ingreso
+
+**Modo manual** (sin BIM):
+1. Usuario crea proyecto (tipo + país + región)
+2. Agente sugiere partidas del catálogo (filtradas por tags)
+3. Usuario confirma/quita/agrega → ingresa metrados manualmente
+4. Exporta a Odoo / S10 / Excel
+
+**Modo BIM-driven** (con Revit 2025):
+1. Add-in C# extrae categoría + familia + tipo + parámetros
+2. POST JSON a /api/bim/import
+3. Sistema cruza con revit_mapeos → calcula metrado
+4. Usuario revisa → confirma → exporta
+
+**Modo importación Excel** (datos existentes):
+1. Usuario sube Excel con: descripcion | unidad | metrado
+2. Agente mapea cada fila al catálogo por similitud semántica
+3. Usuario confirma → sistema normaliza → crea proyecto_partidas
+
+---
+
+## 📌 Principios de diseño — no cambiar sin discutir
+
+1. **El catálogo nunca se duplica** — `proyecto_partidas` solo referencia, nunca copia
+2. **Tags son el lenguaje del agente** — agregar tags antes de agregar lógica
+3. **APU es de Odoo** — ConstructionOS no calcula precios, solo metrados
+4. **Supabase y Odoo nunca comparten DB** — solo se comunican via API/n8n
+5. **El Add-in Revit es el único componente desktop** — todo lo demás es web
+6. **Nuevas partidas pasan por `partida_sugerencias`** — nunca directo al catálogo sin revisión
