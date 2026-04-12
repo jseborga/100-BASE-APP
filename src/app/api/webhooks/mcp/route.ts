@@ -183,7 +183,7 @@ async function handleListProjects(params: Record<string, unknown>) {
 
   let query = admin
     .from('proyectos')
-    .select('id, nombre, descripcion, tipologia, ubicacion, estado, area_m2, num_pisos, created_at, paises(codigo, nombre)')
+    .select('id, nombre, descripcion, tipologia, ubicacion, estado, created_at, paises(codigo, nombre)')
     .order('updated_at', { ascending: false })
     .limit(limit)
 
