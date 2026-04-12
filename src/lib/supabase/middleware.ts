@@ -1,5 +1,5 @@
-import { type NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
+import { NextResponse, type NextRequest } from 'next/server'
 import { Database } from '@/types/database'
 
 export async function updateSession(request: NextRequest) {
@@ -17,22 +17,14 @@ export async function updateSession(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: { name: string; value: string; options?: Record<string, unknown> }[]) {
           cookiesToSet.forEach(({ name, value }) => response.cookies.set(name, value))
         },
       },
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (user && request.nextUrl.pathname === '/login') {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
-  }
-
-  if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
-    return NextResponse.redirect(new URL('/login', request.url))
-  }
+  await supabase.auth.getUser()
 
   return response
 }
