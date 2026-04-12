@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { ChatAgente } from '@/components/agentes/chat-agente'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Bot, Scale } from 'lucide-react'
+import { Bot } from 'lucide-react'
 import type { AgentContext } from '@/lib/anthropic/agents'
 
 interface Pais {
@@ -124,10 +124,10 @@ export default function AgentesPage() {
           <ChatAgente
             agente="normativa"
             titulo="Agente de Normativa"
-            descripcion="Consulta normas de construcci\u00f3n: NB, RNE, ABNT, CSI. Cita art\u00edculos exactos."
+            descripcion="Consulta normas de construcción: NB, RNE, ABNT, CSI. Cita artículos exactos."
             endpoint="/api/agentes/normativa"
             contexto={buildContext(selectedProyecto)}
-            placeholder="Ej: \u00bfCu\u00e1l es la separaci\u00f3n m\u00e1xima de estribos en columnas seg\u00fan NB?"
+            placeholder="Ej: ¿Cuál es la separación máxima de estribos en columnas según NB?"
           />
         </div>
       ) : (
