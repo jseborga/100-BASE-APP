@@ -1,9 +1,8 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  // TODO: set to false after generating Supabase types with `supabase gen types`
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   output: 'standalone',
   poweredByHeader: false,

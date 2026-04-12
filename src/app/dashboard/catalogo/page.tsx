@@ -19,14 +19,14 @@ import {
   ChevronRight,
   BookOpen,
   Hash,
-  Tag,
+  Tag as TagIcon,
 } from 'lucide-react'
 
 // ============================================================
 // Types
 // ============================================================
 
-interface Tag {
+interface TagData {
   id: string
   dimension: string
   valor: string
@@ -34,7 +34,7 @@ interface Tag {
 
 interface PartidaTag {
   tag_id: string
-  tags: Tag
+  tags: TagData
 }
 
 interface PartidaLocalizacion {
@@ -48,9 +48,9 @@ interface Partida {
   nombre: string
   descripcion: string | null
   unidad: string
-  tipo: string
+  tipo: string | null
   capitulo: string | null
-  es_compuesta: boolean
+  es_compuesta: boolean | null
   partida_localizaciones: PartidaLocalizacion[]
   partida_tags: PartidaTag[]
 }
@@ -63,10 +63,6 @@ interface GroupedPartidas {
 // Constants
 // ============================================================
 
-// Bolivia estandar ID from CLAUDE.md
-const BOLIVIA_ESTANDAR_ID = '95e56a90-7d84-4b2a-932e-6a097bdc06f8'
-
-// Tag dimensions to display (keep concise)
 const DISPLAY_TAG_DIMENSIONS = ['frecuencia', 'especialidad']
 
 // ============================================================
@@ -76,7 +72,6 @@ const DISPLAY_TAG_DIMENSIONS = ['frecuencia', 'especialidad']
 export default function CatalogPage() {
   const supabase = createClient()
 
-  // State
   const [partidas, setPartidas] = useState<Partida[]>([])
   const [groupedPartidas, setGroupedPartidas] = useState<GroupedPartidas>({})
   const [filteredPartidas, setFilteredPartidas] = useState<GroupedPartidas>({})
@@ -119,35 +114,33 @@ export default function CatalogPage() {
           return
         }
 
-        // Filter to include only partidas with Bolivia localizaciones
-        const boliviaPartidas = (data || []).filter((p) => {
+        const boliviaPartidas = ((data ?? []) as unknown as Partida[]).filter((p) => {
           return (
             p.partida_localizaciones &&
             p.partida_localizaciones.length > 0
           )
-        }) as Partida[]
+        })
 
         setPartidas(boliviaPartidas)
 
-        // Group by capitulo
         const grouped = groupPartidas(boliviaPartidas)
         setGroupedPartidas(grouped)
         setFilteredPartidas(grouped)
 
-        // Auto-expand first chapter
         const firstChapter = Object.keys(grouped)[0]
         if (firstChapter) {
           setExpandedChapters(new Set([firstChapter]))
         }
-      } catch (error) {
-        console.error('Unexpected error:', error)
+      } catch (err) {
+        console.error('Unexpected error:', err)
       } finally {
         setLoading(false)
       }
     }
 
     fetchPartidas()
-  }, [supabase])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ============================================================
   // Helpers
@@ -155,29 +148,24 @@ export default function CatalogPage() {
 
   function groupPartidas(data: Partida[]): GroupedPartidas {
     const grouped: GroupedPartidas = {}
-
     data.forEach((partida) => {
-      const chapter = partida.capitulo || 'Sin Capítulo'
+      const chapter = partida.capitulo || 'Sin Cap\u00edtulo'
       if (!grouped[chapter]) {
         grouped[chapter] = []
       }
       grouped[chapter].push(partida)
     })
-
     return grouped
   }
 
   function filterData() {
     let filtered = partidas
 
-    // Filter by search query (nombre, descripcion, codigo_local)
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase()
       filtered = filtered.filter((p) => {
         const matchName = p.nombre.toLowerCase().includes(query)
-        const matchDesc = p.descripcion
-          ?.toLowerCase()
-          .includes(query)
+        const matchDesc = p.descripcion?.toLowerCase().includes(query)
         const matchCode =
           p.partida_localizaciones &&
           p.partida_localizaciones.some((loc) =>
@@ -187,10 +175,9 @@ export default function CatalogPage() {
       })
     }
 
-    // Filter by selected capitulo
     if (selectedCapitulo) {
       filtered = filtered.filter(
-        (p) => (p.capitulo || 'Sin Capítulo') === selectedCapitulo
+        (p) => (p.capitulo || 'Sin Cap\u00edtulo') === selectedCapitulo
       )
     }
 
@@ -198,9 +185,8 @@ export default function CatalogPage() {
     setFilteredPartidas(grouped)
   }
 
-  useEffect(() => {
-    filterData()
-  }, [searchQuery, selectedCapitulo])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { filterData() }, [searchQuery, selectedCapitulo])
 
   function toggleChapter(chapter: string) {
     const newExpanded = new Set(expandedChapters)
@@ -212,10 +198,8 @@ export default function CatalogPage() {
     setExpandedChapters(newExpanded)
   }
 
-  function getBologiaCodeForPartida(partida: Partida): string | null {
-    const localization = partida.partida_localizaciones?.find(
-      (loc) => loc.id
-    )
+  function getBoliviaCodeForPartida(partida: Partida): string | null {
+    const localization = partida.partida_localizaciones?.[0]
     return localization?.codigo_local || null
   }
 
@@ -224,16 +208,16 @@ export default function CatalogPage() {
     return localization?.referencia_norma || null
   }
 
-  function getDisplayTags(partida: Partida): Tag[] {
+  function getDisplayTags(partida: Partida): TagData[] {
     if (!partida.partida_tags) return []
     return partida.partida_tags
       .map((pt) => pt.tags)
-      .filter((tag) => DISPLAY_TAG_DIMENSIONS.includes(tag.dimension))
-      .slice(0, 3) // Limit to 3 tags for visual clarity
+      .filter((tag) => tag && DISPLAY_TAG_DIMENSIONS.includes(tag.dimension))
+      .slice(0, 3)
   }
 
   function getTagColor(dimension: string): string {
-    const colors: { [key: string]: string } = {
+    const colors: Record<string, string> = {
       frecuencia: 'bg-blue-100 text-blue-800',
       especialidad: 'bg-purple-100 text-purple-800',
       tipo_proyecto: 'bg-green-100 text-green-800',
@@ -264,7 +248,7 @@ export default function CatalogPage() {
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Cargando catálogo...</p>
+          <p className="text-muted-foreground">Cargando cat\u00e1logo...</p>
         </div>
       </div>
     )
@@ -272,31 +256,28 @@ export default function CatalogPage() {
 
   return (
     <div className="space-y-6">
-      {/* ========== HEADER ========== */}
+      {/* HEADER */}
       <div>
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-4xl font-bold tracking-tight">
-              Catálogo de Partidas
+              Cat\u00e1logo de Partidas
             </h1>
             <p className="text-muted-foreground mt-2">
-              {totalPartidas} partidas · {capitalosArray.length} capítulos ·
-              Bolivia NB
+              {totalPartidas} partidas \u00b7 {capitalosArray.length} cap\u00edtulos \u00b7 Bolivia NB
             </p>
           </div>
           <BookOpen className="w-12 h-12 text-muted-foreground opacity-20" />
         </div>
       </div>
 
-      {/* ========== STATS BAR ========== */}
+      {/* STATS BAR */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Total Partidas
-                </p>
+                <p className="text-sm font-medium text-muted-foreground">Total Partidas</p>
                 <p className="text-3xl font-bold mt-1">{totalPartidas}</p>
               </div>
               <div className="bg-blue-100 p-3 rounded-lg">
@@ -310,9 +291,7 @@ export default function CatalogPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Con Código NB
-                </p>
+                <p className="text-sm font-medium text-muted-foreground">Con C\u00f3digo NB</p>
                 <p className="text-3xl font-bold mt-1">{partidasConCodigo}</p>
               </div>
               <div className="bg-purple-100 p-3 rounded-lg">
@@ -326,25 +305,22 @@ export default function CatalogPage() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">
-                  Capítulos
-                </p>
+                <p className="text-sm font-medium text-muted-foreground">Cap\u00edtulos</p>
                 <p className="text-3xl font-bold mt-1">{capitalosArray.length}</p>
               </div>
               <div className="bg-green-100 p-3 rounded-lg">
-                <Tag className="w-6 h-6 text-green-600" />
+                <TagIcon className="w-6 h-6 text-green-600" />
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* ========== SEARCH & FILTERS ========== */}
+      {/* SEARCH & FILTERS */}
       <Card>
         <CardContent className="pt-6 space-y-4">
-          {/* Search Input */}
           <div className="space-y-2">
-            <Label htmlFor="search">Buscar por nombre, código o descripción</Label>
+            <Label htmlFor="search">Buscar por nombre, c\u00f3digo o descripci\u00f3n</Label>
             <div className="relative">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
@@ -357,9 +333,8 @@ export default function CatalogPage() {
             </div>
           </div>
 
-          {/* Chapter Filter Pills */}
           <div className="space-y-2">
-            <Label>Filtrar por Capítulo</Label>
+            <Label>Filtrar por Cap\u00edtulo</Label>
             <div className="flex flex-wrap gap-2">
               <Button
                 variant={selectedCapitulo === null ? 'default' : 'outline'}
@@ -369,21 +344,17 @@ export default function CatalogPage() {
                 Todos
               </Button>
               {capitalosArray.map((chapter) => {
-                const count = groupedPartidas[chapter].length
+                const count = groupedPartidas[chapter]?.length ?? 0
                 return (
                   <Button
                     key={chapter}
-                    variant={
-                      selectedCapitulo === chapter ? 'default' : 'outline'
-                    }
+                    variant={selectedCapitulo === chapter ? 'default' : 'outline'}
                     size="sm"
                     onClick={() =>
-                      setSelectedCapitulo(
-                        selectedCapitulo === chapter ? null : chapter
-                      )
+                      setSelectedCapitulo(selectedCapitulo === chapter ? null : chapter)
                     }
                   >
-                    {chapter.split(' · ')[0]} ({count})
+                    {chapter.split(' \u00b7 ')[0]} ({count})
                   </Button>
                 )
               })}
@@ -392,13 +363,13 @@ export default function CatalogPage() {
         </CardContent>
       </Card>
 
-      {/* ========== CONTENT BY CHAPTER ========== */}
+      {/* CONTENT BY CHAPTER */}
       <div className="space-y-4">
         {capitalosArray.length === 0 ? (
           <Card>
             <CardContent className="pt-6 text-center">
               <p className="text-muted-foreground">
-                No se encontraron partidas que coincidan con tu búsqueda.
+                No se encontraron partidas que coincidan con tu b\u00fasqueda.
               </p>
             </CardContent>
           </Card>
@@ -409,7 +380,6 @@ export default function CatalogPage() {
 
             return (
               <Card key={chapter} className="overflow-hidden">
-                {/* Chapter Header */}
                 <button
                   onClick={() => toggleChapter(chapter)}
                   className="w-full px-6 py-4 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition-colors"
@@ -430,23 +400,19 @@ export default function CatalogPage() {
                   </div>
                 </button>
 
-                {/* Chapter Content */}
                 {isExpanded && (
                   <CardContent className="pt-0">
                     <div className="divide-y">
                       {chapPartidas.map((partida, idx) => {
-                        const nbCode = getBologiaCodeForPartida(partida)
+                        const nbCode = getBoliviaCodeForPartida(partida)
                         const normaRef = getNormaReferencia(partida)
                         const displayTags = getDisplayTags(partida)
 
                         return (
                           <div
                             key={partida.id}
-                            className={`py-4 ${
-                              idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'
-                            }`}
+                            className={`py-4 ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}
                           >
-                            {/* Row Header: Code + Name */}
                             <div className="flex items-start gap-4 mb-2">
                               {nbCode && (
                                 <div className="font-mono font-bold text-lg text-blue-600 min-w-fit">
@@ -463,14 +429,12 @@ export default function CatalogPage() {
                               </Badge>
                             </div>
 
-                            {/* Description */}
                             {partida.descripcion && (
                               <p className="text-xs text-muted-foreground ml-0 mb-2 leading-relaxed">
                                 {partida.descripcion}
                               </p>
                             )}
 
-                            {/* Row Footer: Norma + Tags */}
                             <div className="flex items-center justify-between gap-3 flex-wrap mt-2">
                               <div>
                                 {normaRef && (
@@ -487,9 +451,7 @@ export default function CatalogPage() {
                                     <Badge
                                       key={tag.id}
                                       variant="outline"
-                                      className={`text-xs ${getTagColor(
-                                        tag.dimension
-                                      )}`}
+                                      className={`text-xs ${getTagColor(tag.dimension)}`}
                                     >
                                       {tag.valor}
                                     </Badge>
@@ -509,12 +471,12 @@ export default function CatalogPage() {
         )}
       </div>
 
-      {/* ========== FOOTER INFO ========== */}
+      {/* FOOTER */}
       <Card className="bg-slate-50">
         <CardContent className="pt-6">
           <p className="text-sm text-muted-foreground">
-            Este catálogo contiene el estándar NB de Bolivia. Cada partida puede
-            ser utilizada en múltiples proyectos con metrados específicos. Para
+            Este cat\u00e1logo contiene el est\u00e1ndar NB de Bolivia. Cada partida puede
+            ser utilizada en m\u00faltiples proyectos con metrados espec\u00edficos. Para
             agregar una nueva partida, utiliza el formulario de sugerencias.
           </p>
         </CardContent>

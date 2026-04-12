@@ -1,18 +1,16 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   ArrowLeft, Plus, Trash2, Search, X, Save,
   FileText, MapPin, Building2, ChevronDown, ChevronRight,
-  Hash, Ruler
 } from 'lucide-react'
 
 // --- Types ---
@@ -30,7 +28,7 @@ interface Proyecto {
   ubicacion: string | null
   estado: string | null
   pais_id: string
-  paises?: Pais
+  paises: Pais | null
   created_at: string | null
 }
 
@@ -52,7 +50,7 @@ interface ProyectoPartida {
   metrado_final: number | null
   notas: string | null
   orden: number | null
-  partidas?: PartidaCatalogo
+  partidas: PartidaCatalogo | null
 }
 
 interface PartidaLocalizacion {
@@ -71,7 +69,6 @@ const ESTADOS: Record<string, { label: string; color: string }> = {
 
 export default function ProyectoDetailPage() {
   const params = useParams()
-  const router = useRouter()
   const proyectoId = params.id as string
   const supabase = createClient()
 
@@ -95,7 +92,7 @@ export default function ProyectoDetailPage() {
   const [collapsedChapters, setCollapsedChapters] = useState<Set<string>>(new Set())
 
   // --- Data fetching ---
-  const fetchProyecto = useCallback(async () => {
+  const fetchProyecto = useCallback(async (): Promise<Proyecto | null> => {
     try {
       const { data, error } = await supabase
         .from('proyectos')
@@ -103,13 +100,18 @@ export default function ProyectoDetailPage() {
         .eq('id', proyectoId)
         .single()
       if (error) throw error
-      setProyecto(data)
-      return data
+      const typed: Proyecto = {
+        ...data,
+        paises: data.paises as unknown as Pais | null,
+      }
+      setProyecto(typed)
+      return typed
     } catch (error) {
       console.error('Error fetching proyecto:', error)
       return null
     }
-  }, [supabase, proyectoId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proyectoId])
 
   const fetchPartidas = useCallback(async (paisId?: string) => {
     try {
@@ -119,12 +121,16 @@ export default function ProyectoDetailPage() {
         .eq('proyecto_id', proyectoId)
         .order('orden', { ascending: true })
       if (error) throw error
-      setPartidas(data || [])
+
+      const typed: ProyectoPartida[] = (data ?? []).map(row => ({
+        ...row,
+        partidas: row.partidas as unknown as PartidaCatalogo | null,
+      }))
+      setPartidas(typed)
 
       // Fetch localizations for these partidas
-      if (data && data.length > 0 && paisId) {
-        const partidaIds = data.map(p => p.partida_id)
-        // Get estandar for this pais
+      if (typed.length > 0 && paisId) {
+        const partidaIds = typed.map(p => p.partida_id)
         const { data: estandarData } = await supabase
           .from('estandares')
           .select('id')
@@ -150,7 +156,8 @@ export default function ProyectoDetailPage() {
     } catch (error) {
       console.error('Error fetching partidas:', error)
     }
-  }, [supabase, proyectoId])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proyectoId])
 
   useEffect(() => {
     const init = async () => {
@@ -173,15 +180,15 @@ export default function ProyectoDetailPage() {
         .order('capitulo')
         .limit(50)
       if (error) throw error
-      // Filter out already assigned
       const assignedIds = new Set(partidas.map(p => p.partida_id))
-      setCatalogResults((data || []).filter(p => !assignedIds.has(p.id)))
+      setCatalogResults((data ?? []).filter(p => !assignedIds.has(p.id)))
     } catch (error) {
       console.error('Error searching catalog:', error)
     } finally {
       setSearchLoading(false)
     }
-  }, [supabase, partidas])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partidas])
 
   useEffect(() => {
     const timer = setTimeout(() => searchCatalog(catalogSearch), 300)
@@ -256,10 +263,17 @@ export default function ProyectoDetailPage() {
     })
   }
 
+  const closeAddModal = () => {
+    setShowAddModal(false)
+    setSelectedPartidas(new Set())
+    setCatalogSearch('')
+    setCatalogResults([])
+  }
+
   // --- Grouping ---
   const grouped: GroupedPartidas = {}
   partidas.forEach(pp => {
-    const chapter = (pp.partidas as unknown as PartidaCatalogo)?.capitulo || 'Sin capítulo'
+    const chapter = pp.partidas?.capitulo || 'Sin cap\u00edtulo'
     if (!grouped[chapter]) grouped[chapter] = []
     grouped[chapter].push(pp)
   })
@@ -267,7 +281,6 @@ export default function ProyectoDetailPage() {
 
   // --- Stats ---
   const totalPartidas = partidas.length
-  const totalMetrado = partidas.reduce((sum, p) => sum + (p.metrado_final || 0), 0)
   const sinMetrado = partidas.filter(p => !p.metrado_final).length
 
   // --- Render ---
@@ -290,7 +303,7 @@ export default function ProyectoDetailPage() {
     )
   }
 
-  const pais = proyecto.paises as unknown as Pais | undefined
+  const pais = proyecto.paises
   const estado = ESTADOS[proyecto.estado || 'activo'] || ESTADOS.activo
 
   return (
@@ -315,7 +328,7 @@ export default function ProyectoDetailPage() {
             {pais && (
               <span className="flex items-center gap-1">
                 <MapPin className="w-3.5 h-3.5" />
-                {pais.nombre}{proyecto.ubicacion ? ` · ${proyecto.ubicacion}` : ''}
+                {pais.nombre}{proyecto.ubicacion ? ` \u00b7 ${proyecto.ubicacion}` : ''}
               </span>
             )}
             {proyecto.tipologia && (
@@ -345,7 +358,7 @@ export default function ProyectoDetailPage() {
         <Card>
           <CardContent className="py-4 text-center">
             <p className="text-2xl font-bold">{sortedChapters.length}</p>
-            <p className="text-xs text-muted-foreground">Capítulos</p>
+            <p className="text-xs text-muted-foreground">Cap\u00edtulos</p>
           </CardContent>
         </Card>
       </div>
@@ -357,7 +370,7 @@ export default function ProyectoDetailPage() {
             <div>
               <CardTitle>Planilla de metrados</CardTitle>
               <CardDescription className="mt-1">
-                Partidas asignadas del catálogo con sus metrados
+                Partidas asignadas del cat\u00e1logo con sus metrados
               </CardDescription>
             </div>
             <Button onClick={() => setShowAddModal(true)} className="gap-2">
@@ -373,7 +386,7 @@ export default function ProyectoDetailPage() {
               <p className="text-muted-foreground">No hay partidas asignadas a este proyecto</p>
               <Button variant="outline" onClick={() => setShowAddModal(true)} className="gap-2">
                 <Plus className="w-4 h-4" />
-                Agregar desde el catálogo
+                Agregar desde el cat\u00e1logo
               </Button>
             </div>
           ) : (
@@ -381,11 +394,9 @@ export default function ProyectoDetailPage() {
               {sortedChapters.map(chapter => {
                 const items = grouped[chapter]
                 const isCollapsed = collapsedChapters.has(chapter)
-                const chapterMetrado = items.reduce((s, p) => s + (p.metrado_final || 0), 0)
 
                 return (
                   <div key={chapter} className="border rounded-lg overflow-hidden">
-                    {/* Chapter header */}
                     <button
                       onClick={() => toggleChapter(chapter)}
                       className="w-full flex items-center justify-between px-4 py-3 bg-muted/50 hover:bg-muted transition-colors text-left"
@@ -400,12 +411,10 @@ export default function ProyectoDetailPage() {
                       </div>
                     </button>
 
-                    {/* Partida rows */}
                     {!isCollapsed && (
                       <div>
-                        {/* Table header */}
                         <div className="grid grid-cols-12 gap-2 px-4 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/20">
-                          <div className="col-span-1">Código</div>
+                          <div className="col-span-1">C\u00f3digo</div>
                           <div className="col-span-5">Partida</div>
                           <div className="col-span-1 text-center">Unidad</div>
                           <div className="col-span-2 text-right">Metrado</div>
@@ -413,7 +422,7 @@ export default function ProyectoDetailPage() {
                           <div className="col-span-1"></div>
                         </div>
                         {items.map((pp, idx) => {
-                          const partida = pp.partidas as unknown as PartidaCatalogo
+                          const partida = pp.partidas
                           const loc = localizaciones[pp.partida_id]
                           const isEditingThis = editingMetrado === pp.id
 
@@ -422,28 +431,24 @@ export default function ProyectoDetailPage() {
                               key={pp.id}
                               className={`grid grid-cols-12 gap-2 px-4 py-2.5 items-center text-sm border-b last:border-b-0 ${idx % 2 === 0 ? 'bg-white' : 'bg-muted/10'} group/row hover:bg-blue-50/50 transition-colors`}
                             >
-                              {/* Code */}
                               <div className="col-span-1">
                                 {loc ? (
                                   <span className="font-mono text-xs text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
                                     {loc.codigo_local}
                                   </span>
                                 ) : (
-                                  <span className="text-xs text-muted-foreground">—</span>
+                                  <span className="text-xs text-muted-foreground">\u2014</span>
                                 )}
                               </div>
 
-                              {/* Name */}
                               <div className="col-span-5">
                                 <span className="font-medium">{partida?.nombre || pp.partida_id}</span>
                               </div>
 
-                              {/* Unit */}
                               <div className="col-span-1 text-center">
-                                <Badge variant="outline" className="text-xs">{partida?.unidad || '—'}</Badge>
+                                <Badge variant="outline" className="text-xs">{partida?.unidad || '\u2014'}</Badge>
                               </div>
 
-                              {/* Metrado */}
                               <div className="col-span-2 text-right">
                                 {isEditingThis ? (
                                   <div className="flex items-center gap-1 justify-end">
@@ -473,7 +478,7 @@ export default function ProyectoDetailPage() {
                                     title="Click para editar metrado"
                                   >
                                     {pp.metrado_final != null ? (
-                                      <span className="font-semibold">{pp.metrado_final.toLocaleString('es-BO', { minimumFractionDigits: 2 })}</span>
+                                      <span className="font-semibold">{Number(pp.metrado_final).toLocaleString('es-BO', { minimumFractionDigits: 2 })}</span>
                                     ) : (
                                       <span className="text-muted-foreground italic text-xs">Sin metrado</span>
                                     )}
@@ -481,12 +486,10 @@ export default function ProyectoDetailPage() {
                                 )}
                               </div>
 
-                              {/* Notes */}
                               <div className="col-span-2 text-right">
                                 <span className="text-xs text-muted-foreground truncate block">{pp.notas || ''}</span>
                               </div>
 
-                              {/* Delete */}
                               <div className="col-span-1 text-right">
                                 <Button
                                   variant="ghost"
@@ -514,17 +517,15 @@ export default function ProyectoDetailPage() {
       {/* Add Partidas Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          {/* Backdrop */}
-          <div className="absolute inset-0 bg-black/50" onClick={() => { setShowAddModal(false); setSelectedPartidas(new Set()); setCatalogSearch(''); setCatalogResults([]) }} />
+          <div className="absolute inset-0 bg-black/50" onClick={closeAddModal} />
 
-          {/* Modal */}
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between p-5 border-b">
               <div>
-                <h2 className="text-lg font-semibold">Agregar partidas del catálogo</h2>
+                <h2 className="text-lg font-semibold">Agregar partidas del cat\u00e1logo</h2>
                 <p className="text-sm text-muted-foreground">Busca y selecciona partidas para asignar al proyecto</p>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => { setShowAddModal(false); setSelectedPartidas(new Set()); setCatalogSearch(''); setCatalogResults([]) }}>
+              <Button variant="ghost" size="sm" onClick={closeAddModal}>
                 <X className="w-4 h-4" />
               </Button>
             </div>
@@ -533,7 +534,7 @@ export default function ProyectoDetailPage() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar por nombre, capítulo o descripción..."
+                  placeholder="Buscar por nombre, cap\u00edtulo o descripci\u00f3n..."
                   className="pl-10"
                   value={catalogSearch}
                   onChange={e => setCatalogSearch(e.target.value)}
@@ -597,7 +598,7 @@ export default function ProyectoDetailPage() {
             </div>
 
             <div className="flex items-center justify-end gap-3 p-5 border-t">
-              <Button variant="outline" onClick={() => { setShowAddModal(false); setSelectedPartidas(new Set()); setCatalogSearch(''); setCatalogResults([]) }}>
+              <Button variant="outline" onClick={closeAddModal}>
                 Cancelar
               </Button>
               <Button onClick={addPartidas} disabled={selectedPartidas.size === 0} className="gap-2">

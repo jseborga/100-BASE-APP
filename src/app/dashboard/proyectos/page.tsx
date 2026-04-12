@@ -3,9 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Plus, Folder, MapPin, Calendar, Trash2, Pencil, X, Building2, ChevronRight } from 'lucide-react'
@@ -24,7 +23,7 @@ interface Proyecto {
   ubicacion: string | null
   estado: string | null
   pais_id: string
-  paises?: Pais
+  paises: Pais | null
   created_at: string | null
   _count_partidas?: number
 }
@@ -34,7 +33,7 @@ const TIPOLOGIAS = [
   'Residencial Multifamiliar',
   'Comercial',
   'Industrial',
-  'Educación',
+  'Educaci\u00f3n',
   'Salud',
   'Oficinas',
   'Infraestructura Vial',
@@ -57,7 +56,6 @@ export default function ProyectosPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // Form state
   const [form, setForm] = useState({
     nombre: '',
     descripcion: '',
@@ -81,9 +79,8 @@ export default function ProyectosPage() {
 
       if (error) throw error
 
-      // Get partida counts per project
-      const projectIds = (data || []).map(p => p.id)
-      let counts: Record<string, number> = {}
+      const projectIds = (data ?? []).map(p => p.id)
+      const counts: Record<string, number> = {}
       if (projectIds.length > 0) {
         const { data: countData } = await supabase
           .from('proyecto_partidas')
@@ -97,18 +94,24 @@ export default function ProyectosPage() {
         }
       }
 
-      setProyectos((data || []).map(p => ({ ...p, _count_partidas: counts[p.id] || 0 })))
+      setProyectos((data ?? []).map(p => ({
+        ...p,
+        paises: p.paises as unknown as Pais | null,
+        _count_partidas: counts[p.id] || 0,
+      })))
     } catch (error) {
       console.error('Error fetching proyectos:', error)
     } finally {
       setIsLoading(false)
     }
-  }, [supabase])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const fetchPaises = useCallback(async () => {
     const { data } = await supabase.from('paises').select('id, codigo, nombre').order('nombre')
-    setPaises(data || [])
-  }, [supabase])
+    setPaises(data ?? [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     fetchProyectos()
@@ -173,7 +176,6 @@ export default function ProyectosPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      // Delete related proyecto_partidas first
       await supabase.from('proyecto_partidas').delete().eq('proyecto_id', id)
       await supabase.from('proyecto_miembros').delete().eq('proyecto_id', id)
       const { error } = await supabase.from('proyectos').delete().eq('id', id)
@@ -219,83 +221,83 @@ export default function ProyectosPage() {
       {/* Create/Edit Form */}
       {showForm && (
         <Card className="border-primary/30 shadow-md">
-          <CardHeader className="pb-4">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg">
+          <div className="p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">
                 {editingId ? 'Editar proyecto' : 'Nuevo proyecto'}
-              </CardTitle>
+              </h2>
               <Button variant="ghost" size="sm" onClick={resetForm}>
                 <X className="w-4 h-4" />
               </Button>
             </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="nombre">Nombre del proyecto *</Label>
+                  <Input
+                    id="nombre"
+                    placeholder="Ej: Edificio Residencial Los Pinos"
+                    value={form.nombre}
+                    onChange={e => setForm({ ...form, nombre: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="pais">Pa\u00eds *</Label>
+                  <select
+                    id="pais"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={form.pais_id}
+                    onChange={e => setForm({ ...form, pais_id: e.target.value })}
+                  >
+                    <option value="">Seleccionar pa\u00eds</option>
+                    {paises.map(p => (
+                      <option key={p.id} value={p.id}>{p.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tipologia">Tipolog\u00eda</Label>
+                  <select
+                    id="tipologia"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={form.tipologia}
+                    onChange={e => setForm({ ...form, tipologia: e.target.value })}
+                  >
+                    <option value="">Seleccionar tipolog\u00eda</option>
+                    {TIPOLOGIAS.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ubicacion">Ubicaci\u00f3n</Label>
+                  <Input
+                    id="ubicacion"
+                    placeholder="Ej: La Paz, Zona Sur"
+                    value={form.ubicacion}
+                    onChange={e => setForm({ ...form, ubicacion: e.target.value })}
+                  />
+                </div>
+              </div>
               <div className="space-y-2">
-                <Label htmlFor="nombre">Nombre del proyecto *</Label>
-                <Input
-                  id="nombre"
-                  placeholder="Ej: Edificio Residencial Los Pinos"
-                  value={form.nombre}
-                  onChange={e => setForm({ ...form, nombre: e.target.value })}
+                <Label htmlFor="descripcion">Descripci\u00f3n</Label>
+                <textarea
+                  id="descripcion"
+                  rows={2}
+                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  placeholder="Descripci\u00f3n breve del proyecto..."
+                  value={form.descripcion}
+                  onChange={e => setForm({ ...form, descripcion: e.target.value })}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="pais">País *</Label>
-                <select
-                  id="pais"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  value={form.pais_id}
-                  onChange={e => setForm({ ...form, pais_id: e.target.value })}
-                >
-                  <option value="">Seleccionar país</option>
-                  {paises.map(p => (
-                    <option key={p.id} value={p.id}>{p.nombre}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="tipologia">Tipología</Label>
-                <select
-                  id="tipologia"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  value={form.tipologia}
-                  onChange={e => setForm({ ...form, tipologia: e.target.value })}
-                >
-                  <option value="">Seleccionar tipología</option>
-                  {TIPOLOGIAS.map(t => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ubicacion">Ubicación</Label>
-                <Input
-                  id="ubicacion"
-                  placeholder="Ej: La Paz, Zona Sur"
-                  value={form.ubicacion}
-                  onChange={e => setForm({ ...form, ubicacion: e.target.value })}
-                />
+              <div className="flex gap-3 pt-2">
+                <Button onClick={handleSave} disabled={saving || !form.nombre.trim() || !form.pais_id}>
+                  {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear proyecto'}
+                </Button>
+                <Button variant="outline" onClick={resetForm}>Cancelar</Button>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="descripcion">Descripción</Label>
-              <textarea
-                id="descripcion"
-                rows={2}
-                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                placeholder="Descripción breve del proyecto..."
-                value={form.descripcion}
-                onChange={e => setForm({ ...form, descripcion: e.target.value })}
-              />
-            </div>
-            <div className="flex gap-3 pt-2">
-              <Button onClick={handleSave} disabled={saving || !form.nombre.trim() || !form.pais_id}>
-                {saving ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Crear proyecto'}
-              </Button>
-              <Button variant="outline" onClick={resetForm}>Cancelar</Button>
-            </div>
-          </CardContent>
+          </div>
         </Card>
       )}
 
@@ -305,7 +307,7 @@ export default function ProyectosPage() {
           <CardContent className="py-4">
             <div className="flex items-center justify-between">
               <p className="text-sm">
-                ¿Eliminar este proyecto y todas sus partidas asignadas? Esta acción no se puede deshacer.
+                \u00bfEliminar este proyecto y todas sus partidas asignadas? Esta acci\u00f3n no se puede deshacer.
               </p>
               <div className="flex gap-2 ml-4">
                 <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>Cancelar</Button>
@@ -332,19 +334,12 @@ export default function ProyectosPage() {
         <div className="grid gap-3">
           {proyectos.map((proyecto) => {
             const estado = ESTADOS[proyecto.estado || 'activo'] || ESTADOS.activo
-            const pais = proyecto.paises as unknown as Pais | undefined
+            const pais = proyecto.paises
 
             return (
-              <Card
-                key={proyecto.id}
-                className="hover:border-primary/40 transition-all group"
-              >
+              <Card key={proyecto.id} className="hover:border-primary/40 transition-all group">
                 <div className="flex items-center">
-                  {/* Main clickable area */}
-                  <Link
-                    href={`/dashboard/proyectos/${proyecto.id}`}
-                    className="flex-1 p-5"
-                  >
+                  <Link href={`/dashboard/proyectos/${proyecto.id}`} className="flex-1 p-5">
                     <div className="flex items-start justify-between">
                       <div className="space-y-2">
                         <div className="flex items-center gap-3">
@@ -365,7 +360,7 @@ export default function ProyectosPage() {
                             <span className="flex items-center gap-1">
                               <MapPin className="w-3 h-3" />
                               {pais.nombre}
-                              {proyecto.ubicacion ? ` · ${proyecto.ubicacion}` : ''}
+                              {proyecto.ubicacion ? ` \u00b7 ${proyecto.ubicacion}` : ''}
                             </span>
                           )}
                           {proyecto.tipologia && (
@@ -387,7 +382,6 @@ export default function ProyectosPage() {
                     </div>
                   </Link>
 
-                  {/* Action buttons */}
                   <div className="flex items-center gap-1 pr-4 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button
                       variant="ghost"
