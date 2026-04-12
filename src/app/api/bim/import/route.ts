@@ -22,12 +22,13 @@ export async function POST(request: NextRequest) {
     const { data: importData, error: importError } = await supabase
       .from('bim_importaciones')
       .insert({
-        projeto_id: validatedData.proyecto_id,
-        arquivo_nome: 'imported_from_revit',
-        elementos_importados: validatedData.elementos.length,
+        proyecto_id: validatedData.proyecto_id,
+        archivo_nombre: 'imported_from_revit',
+        total_elementos: validatedData.elementos.length,
+        elementos_mapeados: 0,
         estado: 'procesando',
-        usuario_id: user.id,
-      })
+        importado_por: user.id,
+      } as Record<string, unknown>)
       .select()
       .single()
 
@@ -36,16 +37,18 @@ export async function POST(request: NextRequest) {
     // Create BIM elements
     const elementos = validatedData.elementos.map((el) => ({
       importacion_id: importData.id,
-      categoria_revit: el.categoria_revit,
+      revit_id: el.revit_id || null,
       familia: el.familia,
       tipo: el.tipo,
-      area: el.area || null,
-      volumen: el.volumen || null,
-      longitud: el.longitud || null,
-      cantidad: el.cantidad || null,
-      parametros: el.parametros || null,
-      partida_id: null,
-    }))
+      parametros: {
+        area: el.area || null,
+        volumen: el.volumen || null,
+        longitud: el.longitud || null,
+        cantidad: el.cantidad || null,
+        ...(el.parametros || {}),
+      },
+      estado: 'pendiente',
+    } as Record<string, unknown>))
 
     const { error: elementosError } = await supabase
       .from('bim_elementos')
