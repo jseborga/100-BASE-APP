@@ -64,6 +64,8 @@ export const agenteRequestSchema = z.object({
   mensaje: z.string().min(1, 'El mensaje no puede estar vacío'),
   contexto: agenteContextoSchema,
   historial: z.array(agenteMensajeSchema).optional(),
+  provider: z.enum(['anthropic', 'openai', 'gemini', 'openrouter']).optional(),
+  model: z.string().optional(),
 })
 
 export type AgenteRequestInput = z.infer<typeof agenteRequestSchema>

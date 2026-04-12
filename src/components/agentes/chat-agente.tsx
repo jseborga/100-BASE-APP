@@ -4,8 +4,14 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Send, Loader2, Trash2, Bot, User } from 'lucide-react'
+import { Send, Loader2, Trash2, Bot, User, Settings2 } from 'lucide-react'
 import type { AgentContext, AgentMessage } from '@/lib/anthropic/agents'
+
+interface ProviderInfo {
+  id: string
+  name: string
+  models: { id: string; name: string; contextWindow: number }[]
+}
 
 interface ChatAgenteProps {
   agente: string
@@ -27,8 +33,54 @@ export function ChatAgente({
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // LLM provider/model state
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [selectedProvider, setSelectedProvider] = useState('')
+  const [selectedModel, setSelectedModel] = useState('')
+  const [loadingConfig, setLoadingConfig] = useState(true)
+
+  // Fetch available providers on mount
+  useEffect(() => {
+    async function fetchConfig() {
+      try {
+        const res = await fetch('/api/config/llm')
+        if (res.ok) {
+          const data = await res.json()
+          const provs: ProviderInfo[] = data.providers || []
+          setProviders(provs)
+          if (provs.length > 0) {
+            setSelectedProvider(provs[0].id)
+            if (provs[0].models.length > 0) {
+              setSelectedModel(provs[0].models[0].id)
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching LLM config:', err)
+      } finally {
+        setLoadingConfig(false)
+      }
+    }
+    fetchConfig()
+  }, [])
+
+  // Update model when provider changes
+  const handleProviderChange = (providerId: string) => {
+    setSelectedProvider(providerId)
+    const prov = providers.find(p => p.id === providerId)
+    if (prov && prov.models.length > 0) {
+      setSelectedModel(prov.models[0].id)
+    } else {
+      setSelectedModel('')
+    }
+  }
+
+  const currentProvider = providers.find(p => p.id === selectedProvider)
+  const currentModel = currentProvider?.models.find(m => m.id === selectedModel)
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -64,6 +116,8 @@ export function ChatAgente({
           mensaje: userMessage.content,
           contexto,
           historial: messages,
+          provider: selectedProvider || undefined,
+          model: selectedModel || undefined,
         }),
       })
 
@@ -91,6 +145,9 @@ export function ChatAgente({
               if (data === '[DONE]') break
               try {
                 const parsed = JSON.parse(data)
+                if (parsed.error) {
+                  throw new Error(parsed.error)
+                }
                 if (parsed.text) {
                   assistantContent += parsed.text
                   setMessages(prev => {
@@ -102,8 +159,10 @@ export function ChatAgente({
                     return updated
                   })
                 }
-              } catch {
-                // skip malformed chunks
+              } catch (e) {
+                if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
+                  throw e
+                }
               }
             }
           }
@@ -143,9 +202,22 @@ export function ChatAgente({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {currentModel && (
+              <Badge variant="secondary" className="text-xs">
+                {currentModel.name}
+              </Badge>
+            )}
             <Badge variant="outline" className="text-xs">
               {contexto.pais} ({contexto.pais_codigo})
             </Badge>
+            <Button
+              variant={showSettings ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setShowSettings(!showSettings)}
+              title="Configurar modelo"
+            >
+              <Settings2 className="w-4 h-4" />
+            </Button>
             {messages.length > 0 && (
               <Button variant="ghost" size="sm" onClick={clearChat} title="Limpiar chat">
                 <Trash2 className="w-4 h-4" />
@@ -153,6 +225,54 @@ export function ChatAgente({
             )}
           </div>
         </div>
+
+        {/* Model settings panel */}
+        {showSettings && (
+          <div className="mt-3 p-3 rounded-lg bg-muted/50 border space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Proveedor</label>
+                {loadingConfig ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Cargando...
+                  </div>
+                ) : providers.length === 0 ? (
+                  <p className="text-xs text-destructive">
+                    No hay proveedores configurados. Agrega API keys en las variables de entorno.
+                  </p>
+                ) : (
+                  <select
+                    className="flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={selectedProvider}
+                    onChange={e => handleProviderChange(e.target.value)}
+                  >
+                    {providers.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Modelo</label>
+                <select
+                  className="flex h-8 w-full rounded-md border border-input bg-background px-2 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={selectedModel}
+                  onChange={e => setSelectedModel(e.target.value)}
+                  disabled={!currentProvider}
+                >
+                  {currentProvider?.models.map(m => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {currentModel && (
+              <p className="text-xs text-muted-foreground">
+                Contexto: {(currentModel.contextWindow / 1000).toFixed(0)}K tokens
+              </p>
+            )}
+          </div>
+        )}
       </CardHeader>
 
       <CardContent className="flex-1 flex flex-col min-h-0">
@@ -224,7 +344,7 @@ export function ChatAgente({
           />
           <Button
             onClick={sendMessage}
-            disabled={!input.trim() || isLoading}
+            disabled={!input.trim() || isLoading || providers.length === 0}
             size="sm"
             className="h-10 w-10 p-0"
           >

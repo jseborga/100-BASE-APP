@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getAnthropicClient } from '@/lib/anthropic/client'
-import { buildNormativaSystemPrompt, AGENT_MODEL } from '@/lib/anthropic/agents'
+import { buildNormativaSystemPrompt } from '@/lib/anthropic/agents'
 import type { AgentMessage } from '@/lib/anthropic/agents'
 import { agenteRequestSchema } from '@/lib/schemas'
+import { streamLLM } from '@/lib/llm'
+import type { LLMProvider } from '@/lib/llm'
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,35 +36,34 @@ export async function POST(request: NextRequest) {
 
     messages.push({ role: 'user', content: validated.mensaje })
 
-    // Call Claude with streaming
-    const anthropic = getAnthropicClient()
+    // Determine provider and model from request or defaults
+    const provider = (validated.provider || 'openai') as LLMProvider
+    const model = validated.model || getDefaultModelForProvider(provider)
 
-    const stream = anthropic.messages.stream({
-      model: AGENT_MODEL,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages,
-    })
-
-    // Return streaming response
+    // Stream response from LLM
     const encoder = new TextEncoder()
     const readableStream = new ReadableStream({
       async start(controller) {
         try {
-          for await (const event of stream) {
-            if (
-              event.type === 'content_block_delta' &&
-              event.delta.type === 'text_delta'
-            ) {
-              const chunk = `data: ${JSON.stringify({ text: event.delta.text })}\n\n`
-              controller.enqueue(encoder.encode(chunk))
-            }
+          const stream = streamLLM(
+            { provider, model },
+            { system: systemPrompt, messages, maxTokens: 4096 }
+          )
+
+          for await (const text of stream) {
+            const chunk = `data: ${JSON.stringify({ text })}\n\n`
+            controller.enqueue(encoder.encode(chunk))
           }
+
           controller.enqueue(encoder.encode('data: [DONE]\n\n'))
           controller.close()
         } catch (err) {
           console.error('Streaming error:', err)
-          controller.error(err)
+          const errorMsg = err instanceof Error ? err.message : 'Error de streaming'
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ error: errorMsg })}\n\n`)
+          )
+          controller.close()
         }
       },
     })
@@ -87,4 +87,14 @@ export async function POST(request: NextRequest) {
       }
     )
   }
+}
+
+function getDefaultModelForProvider(provider: LLMProvider): string {
+  const defaults: Record<LLMProvider, string> = {
+    anthropic: 'claude-sonnet-4-20250514',
+    openai: 'gpt-4o',
+    gemini: 'gemini-2.0-flash',
+    openrouter: 'meta-llama/llama-3.1-70b-instruct',
+  }
+  return defaults[provider]
 }
