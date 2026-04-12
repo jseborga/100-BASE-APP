@@ -22,6 +22,8 @@ const createProjectSchema = z.object({
   pais_id: z.string().uuid('pais_id debe ser UUID'),
   tipologia: z.string().optional(),
   ubicacion: z.string().optional(),
+  area_m2: z.number().positive().optional(),
+  num_pisos: z.number().int().positive().optional(),
 })
 
 const updateProjectSchema = z.object({
@@ -32,6 +34,8 @@ const updateProjectSchema = z.object({
   tipologia: z.string().optional(),
   ubicacion: z.string().optional(),
   estado: z.enum(['activo', 'borrador', 'completado', 'archivado']).optional(),
+  area_m2: z.number().positive().optional().nullable(),
+  num_pisos: z.number().int().positive().optional().nullable(),
 })
 
 // GET /api/proyectos - list projects visible to user
@@ -125,7 +129,7 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .single()
 
-    const { nombre, descripcion, pais_id, tipologia, ubicacion } = parsed.data
+    const { nombre, descripcion, pais_id, tipologia, ubicacion, area_m2, num_pisos } = parsed.data
 
     const { data: project, error } = await adminClient
       .from('proyectos')
@@ -135,6 +139,8 @@ export async function POST(request: NextRequest) {
         pais_id,
         tipologia: tipologia || null,
         ubicacion: ubicacion || null,
+        area_m2: area_m2 || null,
+        num_pisos: num_pisos || null,
         propietario_id: user.id,
         org_id: orgRow?.org_id || null,
         estado: 'activo',

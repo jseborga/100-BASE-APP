@@ -26,8 +26,12 @@ interface Pais {
 interface Proyecto {
   id: string
   nombre: string
+  descripcion: string | null
   pais_id: string
   tipologia: string | null
+  ubicacion: string | null
+  area_m2: number | null
+  num_pisos: number | null
   paises: Pais | null
 }
 
@@ -198,6 +202,10 @@ export default function AgentesPage() {
     tipologia: proyecto.tipologia || undefined,
     proyecto_nombre: proyecto.nombre,
     proyecto_id: proyecto.id,
+    proyecto_descripcion: proyecto.descripcion || undefined,
+    area_m2: proyecto.area_m2 || undefined,
+    pisos: proyecto.num_pisos || undefined,
+    region: proyecto.ubicacion || undefined,
   })
 
   const handleQuickAction = (action: typeof QUICK_ACTIONS[0]) => {

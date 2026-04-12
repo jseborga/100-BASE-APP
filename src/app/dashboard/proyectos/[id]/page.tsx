@@ -52,6 +52,8 @@ interface ProyectoDetail {
   estado: string | null
   tipologia: string | null
   ubicacion: string | null
+  area_m2: number | null
+  num_pisos: number | null
   pais_id: string
   paises: Pais | null
   created_at: string | null
@@ -329,6 +331,12 @@ export default function ProyectoDetailPage() {
               <Building2 className="w-4 h-4" />
               {proyecto.tipologia}
             </span>
+          )}
+          {proyecto.area_m2 && (
+            <span>{proyecto.area_m2} m2</span>
+          )}
+          {proyecto.num_pisos && (
+            <span>{proyecto.num_pisos} pisos</span>
           )}
           <span className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />

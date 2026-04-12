@@ -52,7 +52,12 @@ export const agenteContextoSchema = z.object({
   tipologia: z.string().optional(),
   proyecto_nombre: z.string().optional(),
   proyecto_id: z.string().uuid().optional(),
+  proyecto_descripcion: z.string().optional(),
   normativa: z.string().optional(),
+  area_m2: z.number().optional(),
+  pisos: z.number().optional(),
+  region: z.string().optional(),
+  altitud: z.number().optional(),
 })
 
 export const agenteMensajeSchema = z.object({

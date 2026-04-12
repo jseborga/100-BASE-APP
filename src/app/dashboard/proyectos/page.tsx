@@ -24,6 +24,8 @@ interface Proyecto {
   estado: string | null
   pais_id: string
   org_id: string | null
+  area_m2: number | null
+  num_pisos: number | null
   paises: Pais | null
   created_at: string | null
   _count_partidas?: number
@@ -65,6 +67,8 @@ export default function ProyectosPage() {
     pais_id: '',
     tipologia: '',
     ubicacion: '',
+    area_m2: '',
+    num_pisos: '',
   })
 
   const supabase = createClient()
@@ -99,7 +103,7 @@ export default function ProyectosPage() {
   }, [fetchProyectos, fetchPaises])
 
   const resetForm = () => {
-    setForm({ nombre: '', descripcion: '', pais_id: '', tipologia: '', ubicacion: '' })
+    setForm({ nombre: '', descripcion: '', pais_id: '', tipologia: '', ubicacion: '', area_m2: '', num_pisos: '' })
     setEditingId(null)
     setShowForm(false)
     setFormError(null)
@@ -112,6 +116,8 @@ export default function ProyectosPage() {
       pais_id: p.pais_id,
       tipologia: p.tipologia || '',
       ubicacion: p.ubicacion || '',
+      area_m2: p.area_m2 ? String(p.area_m2) : '',
+      num_pisos: p.num_pisos ? String(p.num_pisos) : '',
     })
     setEditingId(p.id)
     setShowForm(true)
@@ -134,6 +140,8 @@ export default function ProyectosPage() {
         pais_id: form.pais_id,
         tipologia: form.tipologia || undefined,
         ubicacion: form.ubicacion.trim() || undefined,
+        area_m2: form.area_m2 ? parseFloat(form.area_m2) : undefined,
+        num_pisos: form.num_pisos ? parseInt(form.num_pisos) : undefined,
       }
 
       let res: Response
@@ -289,7 +297,7 @@ export default function ProyectosPage() {
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="ubicacion">Ubicación</Label>
+                  <Label htmlFor="ubicacion">Ubicacion</Label>
                   <Input
                     id="ubicacion"
                     placeholder="Ej: La Paz, Zona Sur"
@@ -298,16 +306,45 @@ export default function ProyectosPage() {
                   />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="area_m2">Area aproximada (m2)</Label>
+                  <Input
+                    id="area_m2"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="Ej: 850"
+                    value={form.area_m2}
+                    onChange={e => setForm({ ...form, area_m2: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="num_pisos">Numero de pisos</Label>
+                  <Input
+                    id="num_pisos"
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="Ej: 6"
+                    value={form.num_pisos}
+                    onChange={e => setForm({ ...form, num_pisos: e.target.value })}
+                  />
+                </div>
+              </div>
               <div className="space-y-2">
-                <Label htmlFor="descripcion">Descripción</Label>
+                <Label htmlFor="descripcion">Descripcion del proyecto</Label>
                 <textarea
                   id="descripcion"
-                  rows={2}
+                  rows={4}
                   className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  placeholder="Descripción breve del proyecto..."
+                  placeholder="Describe el proyecto con detalle: tipo de estructura, materiales principales, sistema constructivo, numero de departamentos/oficinas, sotanos, tipo de fundacion, acabados previstos, instalaciones especiales... Mientras mas detalle, mejores sugerencias del agente IA."
                   value={form.descripcion}
                   onChange={e => setForm({ ...form, descripcion: e.target.value })}
                 />
+                <p className="text-[10px] text-muted-foreground">
+                  El agente IA usa esta descripcion para sugerir partidas. Se lo mas especifico posible.
+                </p>
               </div>
               <div className="flex gap-3 pt-2">
                 <Button onClick={handleSave} disabled={saving || !form.nombre.trim() || !form.pais_id}>
