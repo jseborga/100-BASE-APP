@@ -769,18 +769,26 @@ async function handleReorderProjectPartidas(params: Record<string, unknown>) {
   if (error) throw new Error(error.message)
   if (!partidas || partidas.length === 0) return { reordered: 0, message: 'No partidas found' }
 
+  // Helper to extract nested partida fields
+  const getCap = (p: unknown): string => {
+    const obj = p as { capitulo?: string } | null
+    return obj?.capitulo || ''
+  }
+  const getName = (p: unknown): string => {
+    const obj = p as { nombre?: string } | null
+    return obj?.nombre || ''
+  }
+
   // Sort: by chapter order, then alphabetically within chapter
   const sorted = partidas.sort((a, b) => {
-    const capA = (a.partidas as Record<string, string>)?.capitulo || ''
-    const capB = (b.partidas as Record<string, string>)?.capitulo || ''
+    const capA = getCap(a.partidas)
+    const capB = getCap(b.partidas)
     const idxA = CHAPTER_ORDER.indexOf(capA)
     const idxB = CHAPTER_ORDER.indexOf(capB)
     const orderA = idxA === -1 ? 999 : idxA
     const orderB = idxB === -1 ? 999 : idxB
     if (orderA !== orderB) return orderA - orderB
-    const nameA = (a.partidas as Record<string, string>)?.nombre || ''
-    const nameB = (b.partidas as Record<string, string>)?.nombre || ''
-    return nameA.localeCompare(nameB, 'es')
+    return getName(a.partidas).localeCompare(getName(b.partidas), 'es')
   })
 
   // Update orden for each partida
@@ -799,7 +807,7 @@ async function handleReorderProjectPartidas(params: Record<string, unknown>) {
   // Build summary by chapter
   const summary: Record<string, number> = {}
   for (const p of sorted) {
-    const cap = (p.partidas as Record<string, string>)?.capitulo || 'Sin capítulo'
+    const cap = getCap(p.partidas) || 'Sin capítulo'
     summary[cap] = (summary[cap] || 0) + 1
   }
 
