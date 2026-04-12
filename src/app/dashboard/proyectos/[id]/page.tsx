@@ -100,10 +100,10 @@ export default function ProyectoDetailPage() {
         .eq('id', proyectoId)
         .single()
       if (error) throw error
-      const typed: Proyecto = {
-        ...data,
+      const typed = {
+        ...(data as Record<string, unknown>),
         paises: data.paises as unknown as Pais | null,
-      }
+      } as Proyecto
       setProyecto(typed)
       return typed
     } catch (error) {
@@ -123,9 +123,9 @@ export default function ProyectoDetailPage() {
       if (error) throw error
 
       const typed: ProyectoPartida[] = (data ?? []).map(row => ({
-        ...row,
+        ...(row as Record<string, unknown>),
         partidas: row.partidas as unknown as PartidaCatalogo | null,
-      }))
+      } as ProyectoPartida))
       setPartidas(typed)
 
       // Fetch localizations for these partidas
@@ -273,7 +273,7 @@ export default function ProyectoDetailPage() {
   // --- Grouping ---
   const grouped: GroupedPartidas = {}
   partidas.forEach(pp => {
-    const chapter = pp.partidas?.capitulo || 'Sin cap\u00edtulo'
+    const chapter = pp.partidas?.capitulo || 'Sin capítulo'
     if (!grouped[chapter]) grouped[chapter] = []
     grouped[chapter].push(pp)
   })
@@ -328,7 +328,7 @@ export default function ProyectoDetailPage() {
             {pais && (
               <span className="flex items-center gap-1">
                 <MapPin className="w-3.5 h-3.5" />
-                {pais.nombre}{proyecto.ubicacion ? ` \u00b7 ${proyecto.ubicacion}` : ''}
+                {pais.nombre}{proyecto.ubicacion ? ` · ${proyecto.ubicacion}` : ''}
               </span>
             )}
             {proyecto.tipologia && (
@@ -358,7 +358,7 @@ export default function ProyectoDetailPage() {
         <Card>
           <CardContent className="py-4 text-center">
             <p className="text-2xl font-bold">{sortedChapters.length}</p>
-            <p className="text-xs text-muted-foreground">Cap\u00edtulos</p>
+            <p className="text-xs text-muted-foreground">Capítulos</p>
           </CardContent>
         </Card>
       </div>
@@ -370,7 +370,7 @@ export default function ProyectoDetailPage() {
             <div>
               <CardTitle>Planilla de metrados</CardTitle>
               <CardDescription className="mt-1">
-                Partidas asignadas del cat\u00e1logo con sus metrados
+                Partidas asignadas del catálogo con sus metrados
               </CardDescription>
             </div>
             <Button onClick={() => setShowAddModal(true)} className="gap-2">
@@ -386,7 +386,7 @@ export default function ProyectoDetailPage() {
               <p className="text-muted-foreground">No hay partidas asignadas a este proyecto</p>
               <Button variant="outline" onClick={() => setShowAddModal(true)} className="gap-2">
                 <Plus className="w-4 h-4" />
-                Agregar desde el cat\u00e1logo
+                Agregar desde el catálogo
               </Button>
             </div>
           ) : (
@@ -414,7 +414,7 @@ export default function ProyectoDetailPage() {
                     {!isCollapsed && (
                       <div>
                         <div className="grid grid-cols-12 gap-2 px-4 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/20">
-                          <div className="col-span-1">C\u00f3digo</div>
+                          <div className="col-span-1">Código</div>
                           <div className="col-span-5">Partida</div>
                           <div className="col-span-1 text-center">Unidad</div>
                           <div className="col-span-2 text-right">Metrado</div>
@@ -437,7 +437,7 @@ export default function ProyectoDetailPage() {
                                     {loc.codigo_local}
                                   </span>
                                 ) : (
-                                  <span className="text-xs text-muted-foreground">\u2014</span>
+                                  <span className="text-xs text-muted-foreground">{'\u2014'}</span>
                                 )}
                               </div>
 
@@ -522,7 +522,7 @@ export default function ProyectoDetailPage() {
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between p-5 border-b">
               <div>
-                <h2 className="text-lg font-semibold">Agregar partidas del cat\u00e1logo</h2>
+                <h2 className="text-lg font-semibold">Agregar partidas del catálogo</h2>
                 <p className="text-sm text-muted-foreground">Busca y selecciona partidas para asignar al proyecto</p>
               </div>
               <Button variant="ghost" size="sm" onClick={closeAddModal}>
@@ -534,7 +534,7 @@ export default function ProyectoDetailPage() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar por nombre, cap\u00edtulo o descripci\u00f3n..."
+                  placeholder="Buscar por nombre, capítulo o descripción..."
                   className="pl-10"
                   value={catalogSearch}
                   onChange={e => setCatalogSearch(e.target.value)}
