@@ -1,0 +1,17 @@
+{
+  "name": "constructionos-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for ConstructionOS — AI-driven construction metrados orchestration",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}

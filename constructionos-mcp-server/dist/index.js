@@ -1,0 +1,203 @@
+#!/usr/bin/env node
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
+const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
+const zod_1 = require("zod");
+// ============================================================
+// ConstructionOS MCP Server
+// Exposes tools for AI-driven construction metrados orchestration
+// Connects to the Next.js webhook API
+// ============================================================
+const API_URL = process.env.CONSTRUCTIONOS_API_URL || 'https://base-app.q8waob.easypanel.host';
+const API_KEY = process.env.CONSTRUCTIONOS_API_KEY || '';
+async function callWebhook(action, params = {}) {
+    const url = `${API_URL}/api/webhooks/mcp`;
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${API_KEY}`,
+        },
+        body: JSON.stringify({ action, params }),
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(`API error (${response.status}): ${err.error || response.statusText}`);
+    }
+    return response.json();
+}
+// ============================================================
+// Server setup
+// ============================================================
+const server = new mcp_js_1.McpServer({
+    name: 'constructionos',
+    version: '1.0.0',
+});
+// ============================================================
+// TOOLS — Read operations
+// ============================================================
+server.tool('list_projects', 'List all construction projects. Returns project name, country, typology, status, area, and floor count.', {
+    estado: zod_1.z.enum(['activo', 'archivado', 'borrador']).optional().describe('Filter by project status'),
+    limit: zod_1.z.number().optional().describe('Max results (default 50)'),
+}, async (params) => {
+    const result = await callWebhook('list_projects', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('get_project', 'Get full detail of a project including all assigned partidas with metrados, localizaciones, and country info. Use this to understand what a project currently contains.', {
+    proyecto_id: zod_1.z.string().uuid().describe('Project UUID'),
+}, async (params) => {
+    const result = await callWebhook('get_project', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('search_catalog', 'Search the master partidas catalog by name, chapter, unit, or tags. Use to find existing partidas before creating new ones. The catalog is country-agnostic — localizaciones add country-specific codes.', {
+    query: zod_1.z.string().optional().describe('Search by partida name (fuzzy match)'),
+    capitulo: zod_1.z.string().optional().describe('Filter by chapter (e.g., "Muros y Tabiques", "Estructura")'),
+    unidad: zod_1.z.string().optional().describe('Filter by unit (m2, m3, ml, kg, pza, glb, m, und)'),
+    pais_codigo: zod_1.z.string().optional().describe('Filter to partidas that have a localizacion for this country code (BO, PE, BR, etc.)'),
+    tags: zod_1.z.array(zod_1.z.string()).optional().describe('Filter by tag values (e.g., ["residencial_multifamiliar", "muy_comun"])'),
+    limit: zod_1.z.number().optional().describe('Max results (default 50)'),
+    offset: zod_1.z.number().optional().describe('Pagination offset'),
+}, async (params) => {
+    const result = await callWebhook('search_catalog', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('get_countries', 'List all available countries in the system with their codes and currencies.', {}, async () => {
+    const result = await callWebhook('get_countries');
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('get_standards', 'List construction standards/normativas (NB for Bolivia, RNE for Peru, ABNT for Brazil, CSI for USA, etc.). Each standard has divisions/chapters.', {
+    pais_codigo: zod_1.z.string().optional().describe('Filter by country code (BO, PE, BR, US, AR, CL)'),
+}, async (params) => {
+    const result = await callWebhook('get_standards', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('get_tags', 'List all AI vocabulary tags used for partida filtering. Tags have 7 dimensions: tipo_proyecto, fase, frecuencia, especialidad, pais, region, origen_bim.', {
+    dimension: zod_1.z.string().optional().describe('Filter by dimension'),
+}, async (params) => {
+    const result = await callWebhook('get_tags', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('get_project_partidas', 'Get all partidas assigned to a project with their metrados (quantities), localizaciones (country codes), and catalog detail.', {
+    proyecto_id: zod_1.z.string().uuid().describe('Project UUID'),
+}, async (params) => {
+    const result = await callWebhook('get_project_partidas', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('get_partida_detail', 'Get full detail of a single catalog partida including all country localizaciones and assigned tags.', {
+    partida_id: zod_1.z.string().uuid().describe('Partida UUID'),
+}, async (params) => {
+    const result = await callWebhook('get_partida_detail', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+// ============================================================
+// TOOLS — Write operations
+// ============================================================
+server.tool('add_partidas_to_project', 'Add one or more existing catalog partidas to a project. Skips duplicates. Optionally set initial metrados.', {
+    proyecto_id: zod_1.z.string().uuid().describe('Project UUID'),
+    partida_ids: zod_1.z.array(zod_1.z.string().uuid()).describe('Array of partida UUIDs to add'),
+    metrados: zod_1.z.record(zod_1.z.string(), zod_1.z.number()).optional().describe('Optional: { partida_id: metrado_value } for initial metrado_manual'),
+}, async (params) => {
+    const result = await callWebhook('add_partidas_to_project', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('remove_partidas_from_project', 'Remove partidas from a project (does not delete them from the catalog).', {
+    proyecto_id: zod_1.z.string().uuid().describe('Project UUID'),
+    partida_ids: zod_1.z.array(zod_1.z.string().uuid()).describe('Array of partida UUIDs to remove'),
+}, async (params) => {
+    const result = await callWebhook('remove_partidas_from_project', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('update_metrado', 'Update the metrado (quantity) for a specific partida within a project.', {
+    proyecto_id: zod_1.z.string().uuid().describe('Project UUID'),
+    partida_id: zod_1.z.string().uuid().describe('Partida UUID'),
+    metrado_manual: zod_1.z.number().optional().describe('Manual metrado value'),
+    metrado_final: zod_1.z.number().optional().describe('Final confirmed metrado'),
+    notas: zod_1.z.string().optional().describe('Notes about the metrado'),
+}, async (params) => {
+    const result = await callWebhook('update_metrado', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('create_partida', 'Create a new partida in the master catalog. Use this when a needed partida does not exist yet. The partida is country-agnostic — add localizaciones separately.', {
+    nombre: zod_1.z.string().describe('Partida name (e.g., "Muro ladrillo soga e=15cm")'),
+    unidad: zod_1.z.string().describe('Unit of measurement (m2, m3, ml, kg, pza, glb, m, und)'),
+    capitulo: zod_1.z.string().optional().describe('Chapter grouping (e.g., "Muros y Tabiques", "Estructura")'),
+    descripcion: zod_1.z.string().optional().describe('Detailed description'),
+    tipo: zod_1.z.string().optional().describe('Type: obra, suministro, instalacion (default: obra)'),
+}, async (params) => {
+    const result = await callWebhook('create_partida', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('create_suggestion', 'Submit a partida suggestion to the review queue. Use this for partidas that should be reviewed before being added to the master catalog.', {
+    nombre_sugerido: zod_1.z.string().describe('Suggested partida name'),
+    unidad_sugerida: zod_1.z.string().optional().describe('Suggested unit'),
+    descripcion: zod_1.z.string().optional().describe('Description and justification'),
+    origen: zod_1.z.enum(['ia', 'usuario']).optional().describe('Origin of suggestion'),
+    contexto: zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()).optional().describe('Additional context (project, country, etc.)'),
+}, async (params) => {
+    const result = await callWebhook('create_suggestion', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('approve_suggestion', 'Approve a pending partida suggestion, creating the actual partida in the master catalog.', {
+    suggestion_id: zod_1.z.string().uuid().describe('Suggestion UUID'),
+}, async (params) => {
+    const result = await callWebhook('approve_suggestion', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('add_localizacion', 'Add or update a country-specific code (localizacion) for a partida. Each partida can have one code per standard (NB for Bolivia, RNE for Peru, etc.).', {
+    partida_id: zod_1.z.string().uuid().describe('Partida UUID'),
+    estandar_codigo: zod_1.z.string().describe('Standard code: NB (Bolivia), RNE (Peru), ABNT (Brazil), CSI (USA), CIRSOC (Argentina), NCh (Chile)'),
+    codigo_local: zod_1.z.string().describe('Local code within the standard (e.g., "05.01", "04.01.01", "04 21 13")'),
+    referencia_norma: zod_1.z.string().optional().describe('Normative reference (e.g., "NB-1225002 Art.3", "RNE E.070")'),
+}, async (params) => {
+    const result = await callWebhook('add_localizacion', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('add_tags_to_partida', 'Assign AI vocabulary tags to a partida for intelligent filtering. Tags have 7 dimensions: tipo_proyecto, fase, frecuencia, especialidad, pais, region, origen_bim.', {
+    partida_id: zod_1.z.string().uuid().describe('Partida UUID'),
+    tags: zod_1.z.array(zod_1.z.object({
+        dimension: zod_1.z.string().describe('Tag dimension'),
+        valor: zod_1.z.string().describe('Tag value'),
+        peso: zod_1.z.number().optional().describe('Weight/relevance (default 1.0)'),
+    })).describe('Tags to assign'),
+}, async (params) => {
+    const result = await callWebhook('add_tags_to_partida', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+// ============================================================
+// TOOLS — Bulk operations
+// ============================================================
+server.tool('bulk_create_partidas', 'Create multiple partidas at once in the master catalog. Max 100 per batch. Returns created partidas with IDs.', {
+    partidas: zod_1.z.array(zod_1.z.object({
+        nombre: zod_1.z.string().describe('Partida name'),
+        unidad: zod_1.z.string().describe('Unit (m2, m3, ml, kg, pza, glb, m, und)'),
+        capitulo: zod_1.z.string().optional().describe('Chapter grouping'),
+        descripcion: zod_1.z.string().optional().describe('Description'),
+    })).describe('Array of partidas to create'),
+}, async (params) => {
+    const result = await callWebhook('bulk_create_partidas', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('bulk_add_localizaciones', 'Add country-specific codes for multiple partidas at once. Max 200 per batch. Upserts — updates existing codes.', {
+    localizaciones: zod_1.z.array(zod_1.z.object({
+        partida_id: zod_1.z.string().uuid().describe('Partida UUID'),
+        estandar_codigo: zod_1.z.string().describe('Standard code (NB, RNE, ABNT, CSI, CIRSOC, NCh)'),
+        codigo_local: zod_1.z.string().describe('Local code'),
+        referencia_norma: zod_1.z.string().optional().describe('Normative reference'),
+    })).describe('Array of localizaciones to add/update'),
+}, async (params) => {
+    const result = await callWebhook('bulk_add_localizaciones', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+// ============================================================
+// Start server
+// ============================================================
+async function main() {
+    const transport = new stdio_js_1.StdioServerTransport();
+    await server.connect(transport);
+    console.error('ConstructionOS MCP server running on stdio');
+}
+main().catch((error) => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+});
