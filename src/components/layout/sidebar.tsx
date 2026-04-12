@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import {
   BarChart3,
   Book,
+  Bot,
   Home,
   LogOut,
   Settings,
@@ -23,8 +24,9 @@ export function Sidebar({ onLogout }: SidebarProps) {
   const links = [
     { href: '/dashboard', label: 'Panel', icon: Home },
     { href: '/dashboard/proyectos', label: 'Proyectos', icon: Folder },
-    { href: '/dashboard/catalogo', label: 'Catálogo', icon: Book },
-    { href: '/dashboard/configuracion', label: 'Configuración', icon: Settings },
+    { href: '/dashboard/catalogo', label: 'Cat\u00e1logo', icon: Book },
+    { href: '/dashboard/agentes', label: 'Agentes IA', icon: Bot },
+    { href: '/dashboard/configuracion', label: 'Configuraci\u00f3n', icon: Settings },
   ]
 
   return (
@@ -64,7 +66,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
             onClick={onLogout}
           >
             <LogOut className="w-4 h-4" />
-            Cerrar sesión
+            Cerrar sesi\u00f3n
           </Button>
         </div>
       </div>

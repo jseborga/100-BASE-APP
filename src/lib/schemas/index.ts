@@ -43,3 +43,27 @@ export const partidaSugerenciaSchema = z.object({
 })
 
 export type PartidaSugerenciaInput = z.infer<typeof partidaSugerenciaSchema>
+
+// --- Agent schemas ---
+
+export const agenteContextoSchema = z.object({
+  pais: z.string().min(1, 'País es obligatorio'),
+  pais_codigo: z.string().min(2).max(3),
+  tipologia: z.string().optional(),
+  proyecto_nombre: z.string().optional(),
+  proyecto_id: z.string().uuid().optional(),
+  normativa: z.string().optional(),
+})
+
+export const agenteMensajeSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string(),
+})
+
+export const agenteRequestSchema = z.object({
+  mensaje: z.string().min(1, 'El mensaje no puede estar vacío'),
+  contexto: agenteContextoSchema,
+  historial: z.array(agenteMensajeSchema).optional(),
+})
+
+export type AgenteRequestInput = z.infer<typeof agenteRequestSchema>
