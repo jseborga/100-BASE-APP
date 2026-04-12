@@ -22,9 +22,9 @@ export default function DashboardPage() {
     const getStats = async () => {
       try {
         const [proyectosRes, partidasRes, tagsRes] = await Promise.all([
-          supabase.from('proyectos').select('id', { count: 'exact' }),
-          supabase.from('partidas').select('id', { count: 'exact' }),
-          supabase.from('tags').select('id', { count: 'exact' }),
+          supabase.from('proyectos').select('*', { count: 'exact', head: true }),
+          supabase.from('partidas').select('*', { count: 'exact', head: true }),
+          supabase.from('tags').select('*', { count: 'exact', head: true }),
         ])
 
         setStats({
@@ -48,7 +48,7 @@ export default function DashboardPage() {
       <div className="space-y-2">
         <h1 className="text-3xl font-bold">Panel de control</h1>
         <p className="text-muted-foreground">
-          Bienvenido a ConstructionOS, plataforma de estandarización de metrados
+          Bienvenido a ConstructionOS, plataforma de estandarizaci\u00f3n de metrados
         </p>
       </div>
 
@@ -79,7 +79,7 @@ export default function DashboardPage() {
               {isLoading ? '-' : stats.totalPartidas}
             </div>
             <p className="text-xs text-muted-foreground">
-              En el catálogo master
+              En el cat\u00e1logo master
             </p>
           </CardContent>
         </Card>
@@ -102,7 +102,7 @@ export default function DashboardPage() {
 
       {/* Quick Actions */}
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Acciones rápidas</h2>
+        <h2 className="text-xl font-semibold">Acciones r\u00e1pidas</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Card className="p-6">
             <div className="space-y-4">
@@ -124,7 +124,7 @@ export default function DashboardPage() {
           <Card className="p-6">
             <div className="space-y-4">
               <div>
-                <h3 className="font-semibold">Explorar Catálogo</h3>
+                <h3 className="font-semibold">Explorar Cat\u00e1logo</h3>
                 <p className="text-sm text-muted-foreground">
                   Navega todas las partidas estandarizadas disponibles
                 </p>
@@ -132,7 +132,7 @@ export default function DashboardPage() {
               <Link href="/dashboard/catalogo">
                 <Button variant="outline" className="gap-2">
                   <BookOpen className="w-4 h-4" />
-                  Ver catálogo
+                  Ver cat\u00e1logo
                 </Button>
               </Link>
             </div>
@@ -142,13 +142,13 @@ export default function DashboardPage() {
 
       {/* Features */}
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Características principales</h2>
+        <h2 className="text-xl font-semibold">Caracter\u00edsticas principales</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {[
-            { title: 'Catálogo Master', desc: 'Partidas estandarizadas por país y normativa' },
-            { title: 'BIM Integration', desc: 'Mapeo automático de elementos Revit a partidas' },
+            { title: 'Cat\u00e1logo Master', desc: 'Partidas estandarizadas por pa\u00eds y normativa' },
+            { title: 'BIM Integration', desc: 'Mapeo autom\u00e1tico de elementos Revit a partidas' },
             { title: 'Asistencia IA', desc: '6 agentes especializados para metrados y presupuestos' },
-            { title: 'Exportación', desc: 'Genera planillas para Odoo, S10 o Excel' },
+            { title: 'Exportaci\u00f3n', desc: 'Genera planillas para Odoo, S10 o Excel' },
           ].map((feature) => (
             <Card key={feature.title}>
               <CardHeader>

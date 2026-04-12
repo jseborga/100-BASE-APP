@@ -79,7 +79,9 @@ export default function ProyectosPage() {
 
       if (error) throw error
 
-      const projectIds = (data ?? []).map(p => p.id)
+      // Cast: supabase-js type inference resolves to 'never' for join queries
+      const rows = (data ?? []) as unknown as Proyecto[]
+      const projectIds = rows.map(p => p.id)
       const counts: Record<string, number> = {}
       if (projectIds.length > 0) {
         const { data: countData } = await supabase
@@ -87,16 +89,15 @@ export default function ProyectosPage() {
           .select('proyecto_id')
           .in('proyecto_id', projectIds)
 
-        if (countData) {
-          countData.forEach(row => {
-            counts[row.proyecto_id] = (counts[row.proyecto_id] || 0) + 1
-          })
-        }
+        // Cast: supabase-js type inference may resolve to 'never'
+        const countRows = (countData ?? []) as unknown as { proyecto_id: string }[]
+        countRows.forEach(row => {
+          counts[row.proyecto_id] = (counts[row.proyecto_id] || 0) + 1
+        })
       }
 
-      setProyectos((data ?? []).map(p => ({
+      setProyectos(rows.map(p => ({
         ...p,
-        paises: p.paises as unknown as Pais | null,
         _count_partidas: counts[p.id] || 0,
       })))
     } catch (error) {
@@ -109,7 +110,8 @@ export default function ProyectosPage() {
 
   const fetchPaises = useCallback(async () => {
     const { data } = await supabase.from('paises').select('id, codigo, nombre').order('nombre')
-    setPaises(data ?? [])
+    // Cast: supabase-js type inference may resolve to 'never'
+    setPaises((data ?? []) as unknown as Pais[])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -155,13 +157,13 @@ export default function ProyectosPage() {
       if (editingId) {
         const { error } = await supabase
           .from('proyectos')
-          .update(payload)
+          .update(payload as never)
           .eq('id', editingId)
         if (error) throw error
       } else {
         const { error } = await supabase
           .from('proyectos')
-          .insert({ ...payload, propietario_id: user.id, estado: 'activo' })
+          .insert({ ...payload, propietario_id: user.id, estado: 'activo' } as never)
         if (error) throw error
       }
 

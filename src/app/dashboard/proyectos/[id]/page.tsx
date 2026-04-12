@@ -100,11 +100,8 @@ export default function ProyectoDetailPage() {
         .eq('id', proyectoId)
         .single()
       if (error) throw error
-      const row = data as unknown as Record<string, unknown>
-      const typed = {
-        ...row,
-        paises: row.paises as Pais | null,
-      } as Proyecto
+      // Cast: supabase-js type inference resolves to 'never' for join queries
+      const typed = data as unknown as Proyecto
       setProyecto(typed)
       return typed
     } catch (error) {
@@ -123,30 +120,32 @@ export default function ProyectoDetailPage() {
         .order('orden', { ascending: true })
       if (error) throw error
 
-      const rows = (data ?? []) as unknown as Record<string, unknown>[]
-      const typed: ProyectoPartida[] = rows.map(row => ({
-        ...row,
-        partidas: row.partidas as PartidaCatalogo | null,
-      } as ProyectoPartida))
+      // Cast: supabase-js type inference resolves to 'never' for join queries
+      const typed = (data ?? []) as unknown as ProyectoPartida[]
       setPartidas(typed)
 
       // Fetch localizations for these partidas
       if (typed.length > 0 && paisId) {
         const partidaIds = typed.map(p => p.partida_id)
-        const { data: estandarData } = await supabase
+        const { data: estandarRaw } = await supabase
           .from('estandares')
           .select('id')
           .eq('pais_id', paisId)
           .limit(1)
 
-        if (estandarData && estandarData.length > 0) {
-          const { data: locData } = await supabase
+        // Cast: supabase-js type inference may resolve to 'never'
+        const estandarData = (estandarRaw ?? []) as unknown as { id: string }[]
+
+        if (estandarData.length > 0) {
+          const { data: locRaw } = await supabase
             .from('partida_localizaciones')
             .select('partida_id, codigo_local, referencia_norma')
             .eq('estandar_id', estandarData[0].id)
             .in('partida_id', partidaIds)
 
-          if (locData) {
+          // Cast: supabase-js type inference may resolve to 'never'
+          const locData = (locRaw ?? []) as unknown as { partida_id: string; codigo_local: string; referencia_norma: string | null }[]
+          if (locData.length > 0) {
             const locMap: Record<string, PartidaLocalizacion> = {}
             locData.forEach(l => {
               locMap[l.partida_id] = { codigo_local: l.codigo_local, referencia_norma: l.referencia_norma }
@@ -182,8 +181,10 @@ export default function ProyectoDetailPage() {
         .order('capitulo')
         .limit(50)
       if (error) throw error
+      // Cast: supabase-js type inference may resolve to 'never'
+      const results = (data ?? []) as unknown as PartidaCatalogo[]
       const assignedIds = new Set(partidas.map(p => p.partida_id))
-      setCatalogResults((data ?? []).filter(p => !assignedIds.has(p.id)))
+      setCatalogResults(results.filter(p => !assignedIds.has(p.id)))
     } catch (error) {
       console.error('Error searching catalog:', error)
     } finally {
@@ -208,7 +209,7 @@ export default function ProyectoDetailPage() {
         orden: maxOrden + i + 1,
       }))
 
-      const { error } = await supabase.from('proyecto_partidas').insert(inserts)
+      const { error } = await supabase.from('proyecto_partidas').insert(inserts as never[])
       if (error) throw error
 
       setShowAddModal(false)
@@ -237,7 +238,7 @@ export default function ProyectoDetailPage() {
     try {
       const { error } = await supabase
         .from('proyecto_partidas')
-        .update({ metrado_manual: value, metrado_final: value })
+        .update({ metrado_manual: value, metrado_final: value } as never)
         .eq('id', ppId)
       if (error) throw error
       setPartidas(prev => prev.map(p =>
@@ -275,7 +276,7 @@ export default function ProyectoDetailPage() {
   // --- Grouping ---
   const grouped: GroupedPartidas = {}
   partidas.forEach(pp => {
-    const chapter = pp.partidas?.capitulo || 'Sin capítulo'
+    const chapter = pp.partidas?.capitulo || 'Sin cap\u00edtulo'
     if (!grouped[chapter]) grouped[chapter] = []
     grouped[chapter].push(pp)
   })
@@ -330,7 +331,7 @@ export default function ProyectoDetailPage() {
             {pais && (
               <span className="flex items-center gap-1">
                 <MapPin className="w-3.5 h-3.5" />
-                {pais.nombre}{proyecto.ubicacion ? ` · ${proyecto.ubicacion}` : ''}
+                {pais.nombre}{proyecto.ubicacion ? ` \u00b7 ${proyecto.ubicacion}` : ''}
               </span>
             )}
             {proyecto.tipologia && (
@@ -360,7 +361,7 @@ export default function ProyectoDetailPage() {
         <Card>
           <CardContent className="py-4 text-center">
             <p className="text-2xl font-bold">{sortedChapters.length}</p>
-            <p className="text-xs text-muted-foreground">Capítulos</p>
+            <p className="text-xs text-muted-foreground">Cap\u00edtulos</p>
           </CardContent>
         </Card>
       </div>
@@ -372,7 +373,7 @@ export default function ProyectoDetailPage() {
             <div>
               <CardTitle>Planilla de metrados</CardTitle>
               <CardDescription className="mt-1">
-                Partidas asignadas del catálogo con sus metrados
+                Partidas asignadas del cat\u00e1logo con sus metrados
               </CardDescription>
             </div>
             <Button onClick={() => setShowAddModal(true)} className="gap-2">
@@ -388,7 +389,7 @@ export default function ProyectoDetailPage() {
               <p className="text-muted-foreground">No hay partidas asignadas a este proyecto</p>
               <Button variant="outline" onClick={() => setShowAddModal(true)} className="gap-2">
                 <Plus className="w-4 h-4" />
-                Agregar desde el catálogo
+                Agregar desde el cat\u00e1logo
               </Button>
             </div>
           ) : (
@@ -416,7 +417,7 @@ export default function ProyectoDetailPage() {
                     {!isCollapsed && (
                       <div>
                         <div className="grid grid-cols-12 gap-2 px-4 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/20">
-                          <div className="col-span-1">Código</div>
+                          <div className="col-span-1">C\u00f3digo</div>
                           <div className="col-span-5">Partida</div>
                           <div className="col-span-1 text-center">Unidad</div>
                           <div className="col-span-2 text-right">Metrado</div>
@@ -439,7 +440,7 @@ export default function ProyectoDetailPage() {
                                     {loc.codigo_local}
                                   </span>
                                 ) : (
-                                  <span className="text-xs text-muted-foreground">{'\u2014'}</span>
+                                  <span className="text-xs text-muted-foreground">\u2014</span>
                                 )}
                               </div>
 
@@ -524,7 +525,7 @@ export default function ProyectoDetailPage() {
           <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between p-5 border-b">
               <div>
-                <h2 className="text-lg font-semibold">Agregar partidas del catálogo</h2>
+                <h2 className="text-lg font-semibold">Agregar partidas del cat\u00e1logo</h2>
                 <p className="text-sm text-muted-foreground">Busca y selecciona partidas para asignar al proyecto</p>
               </div>
               <Button variant="ghost" size="sm" onClick={closeAddModal}>
@@ -536,7 +537,7 @@ export default function ProyectoDetailPage() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar por nombre, capítulo o descripción..."
+                  placeholder="Buscar por nombre, cap\u00edtulo o descripci\u00f3n..."
                   className="pl-10"
                   value={catalogSearch}
                   onChange={e => setCatalogSearch(e.target.value)}
