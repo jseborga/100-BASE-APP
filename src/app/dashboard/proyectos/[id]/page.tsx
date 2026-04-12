@@ -100,9 +100,10 @@ export default function ProyectoDetailPage() {
         .eq('id', proyectoId)
         .single()
       if (error) throw error
+      const row = data as unknown as Record<string, unknown>
       const typed = {
-        ...(data as Record<string, unknown>),
-        paises: data.paises as unknown as Pais | null,
+        ...row,
+        paises: row.paises as Pais | null,
       } as Proyecto
       setProyecto(typed)
       return typed
@@ -122,9 +123,10 @@ export default function ProyectoDetailPage() {
         .order('orden', { ascending: true })
       if (error) throw error
 
-      const typed: ProyectoPartida[] = (data ?? []).map(row => ({
-        ...(row as Record<string, unknown>),
-        partidas: row.partidas as unknown as PartidaCatalogo | null,
+      const rows = (data ?? []) as unknown as Record<string, unknown>[]
+      const typed: ProyectoPartida[] = rows.map(row => ({
+        ...row,
+        partidas: row.partidas as PartidaCatalogo | null,
       } as ProyectoPartida))
       setPartidas(typed)
 
