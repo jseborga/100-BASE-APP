@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { Send, Loader2, Trash2, Bot, User } from 'lucide-react'
+import { Send, Loader2, Trash2, Bot, User, Plus, ArrowRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentContext, AgentMessage } from '@/lib/anthropic/agents'
@@ -219,6 +219,7 @@ export function ChatAgente({
                 <div className={`${msg.role === 'user' ? 'max-w-[75%]' : 'flex-1 min-w-0'}`}>
                   {msg.role === 'assistant' ? (
                     msg.content ? (
+                      <>
                       <div className="prose prose-sm dark:prose-invert max-w-none
                         prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold
                         prose-h1:text-lg prose-h2:text-base prose-h3:text-sm
@@ -235,6 +236,25 @@ export function ChatAgente({
                           {msg.content}
                         </ReactMarkdown>
                       </div>
+                      {/* Action buttons after completed assistant messages */}
+                      {!isLoading && i === messages.length - 1 && contexto.proyecto_id && (
+                        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-dashed">
+                          <span className="text-[10px] text-muted-foreground">Acciones:</span>
+                          <a href={`/dashboard/catalogo?proyecto=${contexto.proyecto_id}`}>
+                            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+                              <Plus className="w-3 h-3" />
+                              Agregar partidas al proyecto
+                            </Button>
+                          </a>
+                          <a href={`/dashboard/proyectos/${contexto.proyecto_id}`}>
+                            <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs">
+                              <ArrowRight className="w-3 h-3" />
+                              Ver proyecto
+                            </Button>
+                          </a>
+                        </div>
+                      )}
+                      </>
                     ) : (
                       <div className="flex items-center gap-2 text-muted-foreground py-2">
                         <Loader2 className="w-4 h-4 animate-spin" />
