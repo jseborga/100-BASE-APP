@@ -95,6 +95,7 @@ const ACTIONS: Record<string, ActionHandler> = {
   // --- Bulk operations ---
   bulk_create_partidas: handleBulkCreatePartidas,
   bulk_add_localizaciones: handleBulkAddLocalizaciones,
+  reorder_project_partidas: handleReorderProjectPartidas,
 }
 
 // Documentation for GET discovery
@@ -174,6 +175,10 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
   bulk_add_localizaciones: {
     description: 'Add localizaciones for multiple partidas at once',
     params: '{ localizaciones: Array<{ partida_id: string, estandar_codigo: string, codigo_local: string, referencia_norma?: string }> }',
+  },
+  reorder_project_partidas: {
+    description: 'Reorder project partidas by logical chapter sequence. Groups partidas by chapter in construction order, sorts alphabetically within each chapter.',
+    params: '{ proyecto_id: string }',
   },
 }
 
@@ -728,4 +733,80 @@ async function handleBulkAddLocalizaciones(params: Record<string, unknown>) {
 
   if (error) throw new Error(error.message)
   return { processed: rows.length, skipped: localizaciones.length - rows.length }
+}
+
+// Logical chapter order for construction projects
+const CHAPTER_ORDER = [
+  'Obras Preliminares',
+  'Movimiento de Tierras',
+  'Fundaciones',
+  'Estructura de Hormigón Armado',
+  'Estructura Metálica',
+  'Muros y Tabiques',
+  'Revoques y Enlucidos',
+  'Pisos y Pavimentos',
+  'Cubiertas',
+  'Carpintería de Madera',
+  'Carpintería Metálica',
+  'Pintura',
+  'Vidrios y Cristales',
+  'Instalaciones Sanitarias',
+  'Instalaciones Eléctricas',
+  'Instalaciones de Gas',
+]
+
+async function handleReorderProjectPartidas(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const proyecto_id = params.proyecto_id as string
+  if (!proyecto_id) throw new Error('proyecto_id is required')
+
+  // Get all project partidas with catalog detail
+  const { data: partidas, error } = await admin
+    .from('proyecto_partidas')
+    .select('id, orden, partida_id, partidas(nombre, capitulo)')
+    .eq('proyecto_id', proyecto_id)
+
+  if (error) throw new Error(error.message)
+  if (!partidas || partidas.length === 0) return { reordered: 0, message: 'No partidas found' }
+
+  // Sort: by chapter order, then alphabetically within chapter
+  const sorted = partidas.sort((a, b) => {
+    const capA = (a.partidas as Record<string, string>)?.capitulo || ''
+    const capB = (b.partidas as Record<string, string>)?.capitulo || ''
+    const idxA = CHAPTER_ORDER.indexOf(capA)
+    const idxB = CHAPTER_ORDER.indexOf(capB)
+    const orderA = idxA === -1 ? 999 : idxA
+    const orderB = idxB === -1 ? 999 : idxB
+    if (orderA !== orderB) return orderA - orderB
+    const nameA = (a.partidas as Record<string, string>)?.nombre || ''
+    const nameB = (b.partidas as Record<string, string>)?.nombre || ''
+    return nameA.localeCompare(nameB, 'es')
+  })
+
+  // Update orden for each partida
+  let updated = 0
+  for (let i = 0; i < sorted.length; i++) {
+    const newOrden = i + 1
+    if (sorted[i].orden !== newOrden) {
+      await admin
+        .from('proyecto_partidas')
+        .update({ orden: newOrden })
+        .eq('id', sorted[i].id)
+      updated++
+    }
+  }
+
+  // Build summary by chapter
+  const summary: Record<string, number> = {}
+  for (const p of sorted) {
+    const cap = (p.partidas as Record<string, string>)?.capitulo || 'Sin capítulo'
+    summary[cap] = (summary[cap] || 0) + 1
+  }
+
+  return {
+    reordered: updated,
+    total: sorted.length,
+    message: `${updated} partidas reordered in logical construction sequence`,
+    chapters: summary,
+  }
 }
