@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { bimImportSchema } from '@/lib/schemas'
+import type { Tables } from '@/types/database'
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,8 +20,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Create BIM import record
-    // Note: explicit cast needed because Supabase RLS type inference resolves insert to 'never'
-    const { data: importData, error: importError } = await supabase
+    // Cast needed: Supabase RLS type inference resolves insert to 'never' for tables with policies
+    const { data: rawImportData, error: importError } = await supabase
       .from('bim_importaciones')
       .insert({
         proyecto_id: validatedData.proyecto_id,
@@ -34,6 +35,8 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (importError) throw importError
+
+    const importData = rawImportData as unknown as Tables<'bim_importaciones'>
 
     // Create BIM elements
     const elementos = validatedData.elementos.map((el) => ({
