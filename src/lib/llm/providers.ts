@@ -7,40 +7,54 @@ import type { LLMProvider, LLMModel } from './types'
 export interface ProviderConfig {
   id: LLMProvider
   name: string
-  envKey: string
+  description: string
   baseURL?: string
+  modelsEndpoint?: string  // for dynamic model fetching
+  supportsModelFetch: boolean
 }
 
 export const PROVIDERS: Record<LLMProvider, ProviderConfig> = {
-  anthropic: {
-    id: 'anthropic',
-    name: 'Anthropic (Claude)',
-    envKey: 'ANTHROPIC_API_KEY',
+  openrouter: {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    description: '200+ modelos: Llama, Mistral, DeepSeek, Qwen, Claude, GPT y m\u00e1s',
+    baseURL: 'https://openrouter.ai/api/v1',
+    modelsEndpoint: 'https://openrouter.ai/api/v1/models',
+    supportsModelFetch: true,
   },
   openai: {
     id: 'openai',
     name: 'OpenAI',
-    envKey: 'OPENAI_API_KEY',
+    description: 'GPT-4o, GPT-4o-mini, GPT-4 Turbo',
+    supportsModelFetch: false,
   },
   gemini: {
     id: 'gemini',
     name: 'Google Gemini',
-    envKey: 'GOOGLE_AI_API_KEY',
+    description: 'Gemini 2.0 Flash, Gemini 2.5 Flash, Gemini 1.5 Pro',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    supportsModelFetch: false,
   },
-  openrouter: {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    envKey: 'OPENROUTER_API_KEY',
-    baseURL: 'https://openrouter.ai/api/v1',
+  anthropic: {
+    id: 'anthropic',
+    name: 'Anthropic (Claude)',
+    description: 'Claude Sonnet 4, Claude 3.5 Haiku',
+    supportsModelFetch: false,
+  },
+  huggingface: {
+    id: 'huggingface',
+    name: 'HuggingFace',
+    description: 'Modelos open source v\u00eda HuggingFace Inference API',
+    baseURL: 'https://router.huggingface.co/v1',
+    supportsModelFetch: false,
   },
 }
 
 // ============================================================
-// Available models per provider
+// Static model lists (for providers without dynamic fetch)
 // ============================================================
 
-export const MODELS: LLMModel[] = [
+export const STATIC_MODELS: LLMModel[] = [
   // Anthropic
   { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic', contextWindow: 200000 },
   { id: 'claude-haiku-3-5-20241022', name: 'Claude 3.5 Haiku', provider: 'anthropic', contextWindow: 200000 },
@@ -49,41 +63,32 @@ export const MODELS: LLMModel[] = [
   { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', contextWindow: 128000 },
   { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai', contextWindow: 128000 },
   { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'openai', contextWindow: 128000 },
+  { id: 'o1-mini', name: 'o1 Mini', provider: 'openai', contextWindow: 128000 },
 
-  // Google Gemini (OpenAI-compatible endpoint)
+  // Google Gemini
   { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini', contextWindow: 1000000 },
   { id: 'gemini-2.5-flash-preview-04-17', name: 'Gemini 2.5 Flash', provider: 'gemini', contextWindow: 1000000 },
   { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'gemini', contextWindow: 2000000 },
 
-  // OpenRouter (popular models)
-  { id: 'meta-llama/llama-3.1-70b-instruct', name: 'Llama 3.1 70B', provider: 'openrouter', contextWindow: 131072 },
-  { id: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1 8B', provider: 'openrouter', contextWindow: 131072 },
-  { id: 'mistralai/mistral-large-latest', name: 'Mistral Large', provider: 'openrouter', contextWindow: 128000 },
-  { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3', provider: 'openrouter', contextWindow: 128000 },
-  { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B', provider: 'openrouter', contextWindow: 131072 },
+  // HuggingFace (popular open models)
+  { id: 'meta-llama/Llama-3.1-70B-Instruct', name: 'Llama 3.1 70B', provider: 'huggingface', contextWindow: 131072 },
+  { id: 'mistralai/Mistral-7B-Instruct-v0.3', name: 'Mistral 7B', provider: 'huggingface', contextWindow: 32768 },
+  { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen 2.5 72B', provider: 'huggingface', contextWindow: 131072 },
 ]
 
-// ============================================================
-// Helpers
-// ============================================================
-
-/** Returns only providers that have an API key configured */
-export function getAvailableProviders(): ProviderConfig[] {
-  return Object.values(PROVIDERS).filter(p => !!process.env[p.envKey])
+/** Get static models for a provider */
+export function getStaticModels(provider: LLMProvider): LLMModel[] {
+  return STATIC_MODELS.filter(m => m.provider === provider)
 }
 
-/** Returns models for a given provider */
-export function getModelsForProvider(provider: LLMProvider): LLMModel[] {
-  return MODELS.filter(m => m.provider === provider)
-}
-
-/** Returns the default model for a provider */
+/** Get the default model for a provider */
 export function getDefaultModel(provider: LLMProvider): string {
-  const models = getModelsForProvider(provider)
-  return models[0]?.id || ''
-}
-
-/** Check if a specific provider is configured */
-export function isProviderAvailable(provider: LLMProvider): boolean {
-  return !!process.env[PROVIDERS[provider].envKey]
+  const defaults: Record<LLMProvider, string> = {
+    anthropic: 'claude-sonnet-4-20250514',
+    openai: 'gpt-4o',
+    gemini: 'gemini-2.0-flash',
+    openrouter: 'anthropic/claude-sonnet-4',
+    huggingface: 'meta-llama/Llama-3.1-70B-Instruct',
+  }
+  return defaults[provider]
 }

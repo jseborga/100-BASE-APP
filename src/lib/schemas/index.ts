@@ -1,8 +1,8 @@
 import { z } from 'zod'
 
 export const loginSchema = z.object({
-  email: z.string().email('Correo electrónico inválido'),
-  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
+  email: z.string().email('Correo electr\u00f3nico inv\u00e1lido'),
+  password: z.string().min(6, 'La contrase\u00f1a debe tener al menos 6 caracteres'),
 })
 
 export type LoginInput = z.infer<typeof loginSchema>
@@ -10,7 +10,7 @@ export type LoginInput = z.infer<typeof loginSchema>
 export const proyectoSchema = z.object({
   nombre: z.string().min(1, 'El nombre del proyecto es obligatorio'),
   descripcion: z.string().optional(),
-  pais_id: z.string().uuid('País inválido'),
+  pais_id: z.string().uuid('Pa\u00eds inv\u00e1lido'),
   tipologia: z.string().optional(),
   ubicacion: z.string().optional(),
 })
@@ -18,7 +18,7 @@ export const proyectoSchema = z.object({
 export type ProyectoInput = z.infer<typeof proyectoSchema>
 
 export const bimImportSchema = z.object({
-  proyecto_id: z.string().uuid('ID de proyecto inválido'),
+  proyecto_id: z.string().uuid('ID de proyecto inv\u00e1lido'),
   elementos: z.array(z.object({
     revit_id: z.string().optional(),
     revit_categoria: z.string().optional(),
@@ -47,7 +47,7 @@ export type PartidaSugerenciaInput = z.infer<typeof partidaSugerenciaSchema>
 // --- Agent schemas ---
 
 export const agenteContextoSchema = z.object({
-  pais: z.string().min(1, 'País es obligatorio'),
+  pais: z.string().min(1, 'Pa\u00eds es obligatorio'),
   pais_codigo: z.string().min(2).max(3),
   tipologia: z.string().optional(),
   proyecto_nombre: z.string().optional(),
@@ -61,10 +61,10 @@ export const agenteMensajeSchema = z.object({
 })
 
 export const agenteRequestSchema = z.object({
-  mensaje: z.string().min(1, 'El mensaje no puede estar vacío'),
+  mensaje: z.string().min(1, 'El mensaje no puede estar vac\u00edo'),
   contexto: agenteContextoSchema,
   historial: z.array(agenteMensajeSchema).optional(),
-  provider: z.enum(['anthropic', 'openai', 'gemini', 'openrouter']).optional(),
+  provider: z.enum(['anthropic', 'openai', 'gemini', 'openrouter', 'huggingface']).optional(),
   model: z.string().optional(),
 })
 

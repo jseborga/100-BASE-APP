@@ -1,3 +1,5 @@
 export type { LLMProvider, LLMModel, LLMConfig, LLMStreamOptions } from './types'
-export { PROVIDERS, MODELS, getAvailableProviders, getModelsForProvider, getDefaultModel, isProviderAvailable } from './providers'
+export { PROVIDERS, STATIC_MODELS, getStaticModels, getDefaultModel } from './providers'
+export type { ProviderConfig } from './providers'
 export { streamLLM } from './client'
+export { encryptApiKey, decryptApiKey, maskApiKey } from './crypto'

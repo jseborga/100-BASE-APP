@@ -4,31 +4,28 @@ import { PROVIDERS } from './providers'
 // ============================================================
 // Unified LLM streaming client
 //
-// Supports: Anthropic (native SDK), OpenAI, Gemini, OpenRouter
-// (the last three all use OpenAI-compatible API via openai SDK)
+// Supports: Anthropic (native SDK), OpenAI, Gemini, OpenRouter,
+// HuggingFace (all OpenAI-compatible)
 // ============================================================
 
 /**
  * Stream text from any supported LLM provider.
  * Returns an AsyncGenerator that yields text chunks.
+ * API key is provided at runtime (from encrypted DB storage).
  */
 export async function* streamLLM(
   config: LLMConfig,
   options: LLMStreamOptions
 ): AsyncGenerator<string> {
-  const providerConfig = PROVIDERS[config.provider]
-  const apiKey = process.env[providerConfig.envKey]
-
-  if (!apiKey) {
-    throw new Error(
-      `API key not configured for ${providerConfig.name}. Set ${providerConfig.envKey} in environment variables.`
-    )
+  if (!config.apiKey) {
+    throw new Error(`No API key provided for ${config.provider}`)
   }
 
   if (config.provider === 'anthropic') {
-    yield* streamAnthropic(apiKey, config.model, options)
+    yield* streamAnthropic(config.apiKey, config.model, options)
   } else {
-    yield* streamOpenAICompatible(apiKey, config.model, options, providerConfig.baseURL)
+    const baseURL = PROVIDERS[config.provider]?.baseURL
+    yield* streamOpenAICompatible(config.apiKey, config.model, options, baseURL, config.provider)
   }
 }
 
@@ -41,7 +38,6 @@ async function* streamAnthropic(
   model: string,
   options: LLMStreamOptions
 ): AsyncGenerator<string> {
-  // Dynamic import to avoid loading SDK when not needed
   const { default: Anthropic } = await import('@anthropic-ai/sdk')
   const client = new Anthropic({ apiKey })
 
@@ -64,22 +60,30 @@ async function* streamAnthropic(
 }
 
 // ============================================================
-// OpenAI-compatible streaming (OpenAI, Gemini, OpenRouter)
+// OpenAI-compatible streaming (OpenAI, Gemini, OpenRouter, HuggingFace)
 // ============================================================
 
 async function* streamOpenAICompatible(
   apiKey: string,
   model: string,
   options: LLMStreamOptions,
-  baseURL?: string
+  baseURL?: string,
+  provider?: string
 ): AsyncGenerator<string> {
-  // Dynamic import to avoid loading SDK when not needed
   const { default: OpenAI } = await import('openai')
 
-  const clientOptions: { apiKey: string; baseURL?: string } = { apiKey }
+  const clientOptions: Record<string, unknown> = { apiKey }
   if (baseURL) clientOptions.baseURL = baseURL
 
-  const client = new OpenAI(clientOptions)
+  // OpenRouter requires extra headers
+  if (provider === 'openrouter') {
+    clientOptions.defaultHeaders = {
+      'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://constructionos.app',
+      'X-Title': 'ConstructionOS',
+    }
+  }
+
+  const client = new OpenAI(clientOptions as ConstructorParameters<typeof OpenAI>[0])
 
   const stream = await client.chat.completions.create({
     model,

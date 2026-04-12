@@ -3,8 +3,22 @@ import { createClient } from '@/lib/supabase/server'
 import { buildNormativaSystemPrompt } from '@/lib/anthropic/agents'
 import type { AgentMessage } from '@/lib/anthropic/agents'
 import { agenteRequestSchema } from '@/lib/schemas'
-import { streamLLM } from '@/lib/llm'
+import { streamLLM, getDefaultModel, decryptApiKey } from '@/lib/llm'
 import type { LLMProvider } from '@/lib/llm'
+
+interface DbKey {
+  api_key_encrypted: string
+  iv: string
+}
+
+// Env var fallback map
+const ENV_KEY_MAP: Record<string, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  gemini: 'GOOGLE_AI_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  huggingface: 'HUGGINGFACE_API_KEY',
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,10 +26,7 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
-      return new Response(JSON.stringify({ error: 'No autorizado' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      return Response.json({ error: 'No autorizado' }, { status: 401 })
     }
 
     // Validate request
@@ -25,28 +36,59 @@ export async function POST(request: NextRequest) {
     // Build system prompt with project context
     const systemPrompt = buildNormativaSystemPrompt(validated.contexto)
 
-    // Build messages array from history + new message
+    // Build messages array
     const messages: { role: 'user' | 'assistant'; content: string }[] = []
-
     if (validated.historial) {
       validated.historial.forEach((msg: AgentMessage) => {
         messages.push({ role: msg.role, content: msg.content })
       })
     }
-
     messages.push({ role: 'user', content: validated.mensaje })
 
-    // Determine provider and model from request or defaults
+    // Determine provider and model
     const provider = (validated.provider || 'openai') as LLMProvider
-    const model = validated.model || getDefaultModelForProvider(provider)
+    const model = validated.model || getDefaultModel(provider)
 
-    // Stream response from LLM
+    // Get API key: try user's DB key first, then env var fallback
+    let apiKey = ''
+
+    const { data: keyData } = await supabase
+      .from('llm_api_keys')
+      .select('api_key_encrypted, iv')
+      .eq('user_id', user.id)
+      .eq('provider', provider)
+      .eq('activo', true)
+      .single()
+
+    const keyRow = keyData as unknown as DbKey | null
+
+    if (keyRow) {
+      try {
+        apiKey = decryptApiKey(keyRow.api_key_encrypted, keyRow.iv)
+      } catch (err) {
+        console.error('Key decryption failed:', err)
+      }
+    }
+
+    // Fallback to env var
+    if (!apiKey) {
+      apiKey = process.env[ENV_KEY_MAP[provider] || ''] || ''
+    }
+
+    if (!apiKey) {
+      return Response.json(
+        { error: `No hay API key configurada para ${provider}. Ve a Configuraci\u00f3n para agregar una.` },
+        { status: 400 }
+      )
+    }
+
+    // Stream response
     const encoder = new TextEncoder()
     const readableStream = new ReadableStream({
       async start(controller) {
         try {
           const stream = streamLLM(
-            { provider, model },
+            { provider, model, apiKey },
             { system: systemPrompt, messages, maxTokens: 4096 }
           )
 
@@ -77,24 +119,9 @@ export async function POST(request: NextRequest) {
     })
   } catch (error: unknown) {
     console.error('Normativa agent error:', error)
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : 'Error del agente de normativa',
-      }),
-      {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      }
+    return Response.json(
+      { error: error instanceof Error ? error.message : 'Error del agente de normativa' },
+      { status: 400 }
     )
   }
-}
-
-function getDefaultModelForProvider(provider: LLMProvider): string {
-  const defaults: Record<LLMProvider, string> = {
-    anthropic: 'claude-sonnet-4-20250514',
-    openai: 'gpt-4o',
-    gemini: 'gemini-2.0-flash',
-    openrouter: 'meta-llama/llama-3.1-70b-instruct',
-  }
-  return defaults[provider]
 }
