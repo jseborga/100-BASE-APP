@@ -24,9 +24,9 @@ export function Sidebar({ onLogout }: SidebarProps) {
   const links = [
     { href: '/dashboard', label: 'Panel', icon: Home },
     { href: '/dashboard/proyectos', label: 'Proyectos', icon: Folder },
-    { href: '/dashboard/catalogo', label: 'Cat\u00e1logo', icon: Book },
+    { href: '/dashboard/catalogo', label: 'Catalogo', icon: Book },
     { href: '/dashboard/agentes', label: 'Agentes IA', icon: Bot },
-    { href: '/dashboard/configuracion', label: 'Configuraci\u00f3n', icon: Settings },
+    { href: '/dashboard/configuracion', label: 'Configuracion', icon: Settings },
   ]
 
   return (
@@ -42,20 +42,23 @@ export function Sidebar({ onLogout }: SidebarProps) {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-2">
-          {links.map(({ href, label, icon: Icon }) => (
-            <Link key={href} href={href}>
-              <Button
-                variant={pathname === href ? 'default' : 'ghost'}
-                className={cn(
-                  'w-full justify-start gap-2',
-                  pathname === href && 'bg-primary text-primary-foreground'
-                )}
-              >
-                <Icon className="w-4 h-4" />
-                {label}
-              </Button>
-            </Link>
-          ))}
+          {links.map(({ href, label, icon: Icon }) => {
+            const isActive = pathname === href || (href !== '/dashboard' && pathname.startsWith(href + '/'))
+            return (
+              <Link key={href} href={href}>
+                <Button
+                  variant={isActive ? 'default' : 'ghost'}
+                  className={cn(
+                    'w-full justify-start gap-2',
+                    isActive && 'bg-primary text-primary-foreground'
+                  )}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </Button>
+              </Link>
+            )
+          })}
         </nav>
 
         {/* User & Logout */}
@@ -66,7 +69,7 @@ export function Sidebar({ onLogout }: SidebarProps) {
             onClick={onLogout}
           >
             <LogOut className="w-4 h-4" />
-            Cerrar sesi\u00f3n
+            Cerrar sesion
           </Button>
         </div>
       </div>
