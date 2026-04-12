@@ -1,11 +1,12 @@
 import { createClient as createServerClient } from '@/lib/supabase/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
 // Lazy singleton — avoids "supabaseKey is required" during Next.js build
-let _adminClient: ReturnType<typeof createClient> | null = null
-function getAdminClient() {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _adminClient: SupabaseClient<any> | null = null
+function getAdminClient(): SupabaseClient<any> {
   if (!_adminClient) {
     _adminClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -33,7 +34,7 @@ const updateProjectSchema = z.object({
   estado: z.enum(['activo', 'borrador', 'completado', 'archivado']).optional(),
 })
 
-// GET /api/proyectos — list projects visible to user
+// GET /api/proyectos - list projects visible to user
 export async function GET() {
   try {
     const supabase = await createServerClient()
@@ -59,7 +60,7 @@ export async function GET() {
       .order('created_at', { ascending: false })
 
     if (orgIds.length > 0) {
-      query = query.or(`propietario_id.eq.${user.id},org_id.in.(${orgIds.join(',')})`)
+      query = query.or('propietario_id.eq.' + user.id + ',org_id.in.(' + orgIds.join(',') + ')')
     } else {
       query = query.eq('propietario_id', user.id)
     }
@@ -96,7 +97,7 @@ export async function GET() {
   }
 }
 
-// POST /api/proyectos — create project
+// POST /api/proyectos - create project
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerClient()
@@ -153,7 +154,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PUT /api/proyectos — update project
+// PUT /api/proyectos - update project
 export async function PUT(request: NextRequest) {
   try {
     const supabase = await createServerClient()
