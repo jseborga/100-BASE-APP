@@ -3,10 +3,17 @@ import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
-const adminClient = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+// Lazy singleton — avoids "supabaseKey is required" during Next.js build
+let _adminClient: ReturnType<typeof createClient> | null = null
+function getAdminClient() {
+  if (!_adminClient) {
+    _adminClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+  }
+  return _adminClient
+}
 
 const createProjectSchema = z.object({
   nombre: z.string().min(1, 'El nombre es requerido'),
@@ -34,6 +41,8 @@ export async function GET() {
     if (authError || !user) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
+
+    const adminClient = getAdminClient()
 
     // Get user's org memberships
     const { data: orgRows } = await adminClient
@@ -96,11 +105,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
+    const adminClient = getAdminClient()
+
     const body = await request.json()
     const parsed = createProjectSchema.safeParse(body)
     if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Datos inválidos', details: parsed.error.errors },
+        { error: 'Datos invalidos', details: parsed.error.errors },
         { status: 400 }
       )
     }
@@ -132,7 +143,7 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       console.error('Insert error:', error)
-      return NextResponse.json({ error: `Error al crear: ${error.message}` }, { status: 500 })
+      return NextResponse.json({ error: 'Error al crear: ' + error.message }, { status: 500 })
     }
 
     return NextResponse.json(project, { status: 201 })
@@ -151,10 +162,12 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
 
+    const adminClient = getAdminClient()
+
     const body = await request.json()
     const parsed = updateProjectSchema.safeParse(body)
     if (!parsed.success) {
-      return NextResponse.json({ error: 'Datos inválidos' }, { status: 400 })
+      return NextResponse.json({ error: 'Datos invalidos' }, { status: 400 })
     }
 
     const { id, ...updates } = parsed.data
@@ -196,6 +209,8 @@ export async function DELETE(request: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
     }
+
+    const adminClient = getAdminClient()
 
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
