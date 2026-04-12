@@ -5,19 +5,17 @@ WORKDIR /app
 # Receive build args from EasyPanel
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ARG SUPABASE_SERVICE_ROLE_KEY
 ARG NEXT_PUBLIC_APP_URL
-ARG NODE_ENV=production
 
-# Make them available as env vars during build
+# Make NEXT_PUBLIC vars available during build (inlined into client bundle)
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
-ENV SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package.json ./
 
+# Install ALL deps (including devDependencies for TypeScript build)
 RUN npm install
 
 COPY . .
