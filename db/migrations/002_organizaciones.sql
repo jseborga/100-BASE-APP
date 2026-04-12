@@ -30,19 +30,24 @@ ALTER TABLE organizaciones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE org_miembros ENABLE ROW LEVEL SECURITY;
 
 -- Org policies
+DROP POLICY IF EXISTS "org_select" ON organizaciones;
 CREATE POLICY "org_select" ON organizaciones FOR SELECT USING (
   id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid())
 );
+DROP POLICY IF EXISTS "org_insert" ON organizaciones;
 CREATE POLICY "org_insert" ON organizaciones FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "org_update" ON organizaciones;
 CREATE POLICY "org_update" ON organizaciones FOR UPDATE USING (
   id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid() AND rol = 'admin')
 );
 
 -- Org members policies
+DROP POLICY IF EXISTS "org_miembros_select" ON org_miembros;
 CREATE POLICY "org_miembros_select" ON org_miembros FOR SELECT USING (
   user_id = auth.uid()
   OR org_id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid())
 );
+DROP POLICY IF EXISTS "org_miembros_insert" ON org_miembros;
 CREATE POLICY "org_miembros_insert" ON org_miembros FOR INSERT WITH CHECK (
   user_id = auth.uid()
   OR org_id IN (SELECT org_id FROM org_miembros WHERE user_id = auth.uid() AND rol = 'admin')

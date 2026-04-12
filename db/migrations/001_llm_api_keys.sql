@@ -16,11 +16,13 @@ CREATE TABLE IF NOT EXISTS llm_api_keys (
 
 ALTER TABLE llm_api_keys ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users manage own keys" ON llm_api_keys;
 CREATE POLICY "Users manage own keys" ON llm_api_keys
   FOR ALL
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 
+DROP TRIGGER IF EXISTS trg_llm_api_keys_updated_at ON llm_api_keys;
 CREATE TRIGGER trg_llm_api_keys_updated_at
   BEFORE UPDATE ON llm_api_keys
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
