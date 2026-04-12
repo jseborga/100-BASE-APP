@@ -43,20 +43,43 @@ export function ChatAgente({
   const [selectedModel, setSelectedModel] = useState('')
   const [loadingConfig, setLoadingConfig] = useState(true)
 
-  // Fetch available providers on mount
+  // Fetch available providers + user's agent defaults on mount
   useEffect(() => {
     async function fetchConfig() {
       try {
-        const res = await fetch('/api/config/llm')
-        if (res.ok) {
-          const data = await res.json()
-          const provs: ProviderInfo[] = data.providers || []
+        // Fetch providers and agent defaults in parallel
+        const [llmRes, agentRes] = await Promise.all([
+          fetch('/api/config/llm'),
+          fetch('/api/config/agentes'),
+        ])
+
+        let provs: ProviderInfo[] = []
+        if (llmRes.ok) {
+          const data = await llmRes.json()
+          provs = data.providers || []
           setProviders(provs)
-          if (provs.length > 0) {
-            setSelectedProvider(provs[0].id)
-            if (provs[0].models.length > 0) {
-              setSelectedModel(provs[0].models[0].id)
-            }
+        }
+
+        // Apply user's saved default for THIS agent, or fall back to first provider
+        let defaultProvider = ''
+        let defaultModel = ''
+
+        if (agentRes.ok) {
+          const agentData = await agentRes.json()
+          const agentCfg = agentData.config?.[agente]
+          if (agentCfg) {
+            defaultProvider = agentCfg.provider
+            defaultModel = agentCfg.model
+          }
+        }
+
+        if (defaultProvider && defaultModel) {
+          setSelectedProvider(defaultProvider)
+          setSelectedModel(defaultModel)
+        } else if (provs.length > 0) {
+          setSelectedProvider(provs[0].id)
+          if (provs[0].models.length > 0) {
+            setSelectedModel(provs[0].models[0].id)
           }
         }
       } catch (err) {
@@ -66,7 +89,7 @@ export function ChatAgente({
       }
     }
     fetchConfig()
-  }, [])
+  }, [agente])
 
   // Update model when provider changes
   const handleProviderChange = (providerId: string) => {

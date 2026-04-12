@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +14,24 @@ interface Pais {
   nombre: string
 }
 
+interface PartidaInfo {
+  id: string
+  nombre: string
+  unidad: string
+  capitulo: string | null
+}
+
+interface PartidaProyecto {
+  id: string
+  partida_id: string
+  metrado: number
+  metrado_origen: string | null
+  capitulo: string | null
+  estado: string | null
+  orden: number | null
+  partidas: PartidaInfo | null
+}
+
 interface ProyectoDetail {
   id: string
   nombre: string
@@ -25,15 +42,7 @@ interface ProyectoDetail {
   pais_id: string
   paises: Pais | null
   created_at: string | null
-}
-
-interface PartidaProyecto {
-  id: string
-  partida_id: string
-  metrado: number
-  metrado_origen: string | null
-  capitulo: string | null
-  estado: string | null
+  partidas: PartidaProyecto[]
 }
 
 const ESTADOS: Record<string, { label: string; color: string }> = {
@@ -49,34 +58,19 @@ export default function ProyectoDetailPage() {
   const proyectoId = params.id as string
 
   const [proyecto, setProyecto] = useState<ProyectoDetail | null>(null)
-  const [partidas, setPartidas] = useState<PartidaProyecto[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const supabase = createClient()
-
-    const fetchData = async () => {
+    async function fetchData() {
       try {
-        // Fetch project with country info
-        const { data: proyectoData, error: proyectoError } = await supabase
-          .from('proyectos')
-          .select('*, paises(id, codigo, nombre)')
-          .eq('id', proyectoId)
-          .single()
-
-        if (proyectoError) throw proyectoError
-        setProyecto(proyectoData as unknown as ProyectoDetail)
-
-        // Fetch project partidas
-        const { data: partidasData, error: partidasError } = await supabase
-          .from('proyecto_partidas')
-          .select('*')
-          .eq('proyecto_id', proyectoId)
-          .order('orden', { ascending: true })
-
-        if (partidasError) throw partidasError
-        setPartidas((partidasData || []) as unknown as PartidaProyecto[])
+        const res = await fetch(`/api/proyectos/${proyectoId}`)
+        if (!res.ok) {
+          const err = await res.json()
+          throw new Error(err.error || 'Error al cargar el proyecto')
+        }
+        const data = await res.json()
+        setProyecto(data as ProyectoDetail)
       } catch (err) {
         console.error('Error fetching proyecto:', err)
         setError(err instanceof Error ? err.message : 'Error al cargar el proyecto')
@@ -120,6 +114,7 @@ export default function ProyectoDetailPage() {
   }
 
   const estado = ESTADOS[proyecto.estado || 'activo'] || ESTADOS.activo
+  const partidas = proyecto.partidas || []
 
   return (
     <div className="p-8 space-y-6">
@@ -224,15 +219,22 @@ export default function ProyectoDetailPage() {
               {partidas.map((p) => (
                 <div key={p.id} className="flex justify-between items-center p-3 border rounded-lg">
                   <div className="space-y-1">
-                    <span className="text-sm font-medium">Partida: {p.partida_id}</span>
-                    {p.capitulo && (
-                      <p className="text-xs text-muted-foreground">{p.capitulo}</p>
+                    <span className="text-sm font-medium">
+                      {p.partidas?.nombre || `Partida ${p.partida_id.slice(0, 8)}`}
+                    </span>
+                    {(p.partidas?.capitulo || p.capitulo) && (
+                      <p className="text-xs text-muted-foreground">{p.partidas?.capitulo || p.capitulo}</p>
                     )}
                   </div>
                   <div className="text-right">
                     <span className="text-sm font-semibold">{p.metrado}</span>
+                    {p.partidas?.unidad && (
+                      <span className="text-xs text-muted-foreground ml-1">{p.partidas.unidad}</span>
+                    )}
                     {p.metrado_origen && (
-                      <p className="text-xs text-muted-foreground">{p.metrado_origen}</p>
+                      <p className="text-xs text-muted-foreground">
+                        <Badge variant="outline" className="text-[10px]">{p.metrado_origen}</Badge>
+                      </p>
                     )}
                   </div>
                 </div>
