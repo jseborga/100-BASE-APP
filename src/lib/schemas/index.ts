@@ -11,7 +11,8 @@ export const proyectoSchema = z.object({
   nombre: z.string().min(1, 'El nombre del proyecto es obligatorio'),
   descripcion: z.string().optional(),
   pais_id: z.string().uuid('País inválido'),
-  estandar_id: z.string().uuid('Estándar inválido'),
+  tipologia: z.string().optional(),
+  ubicacion: z.string().optional(),
 })
 
 export type ProyectoInput = z.infer<typeof proyectoSchema>
@@ -19,7 +20,8 @@ export type ProyectoInput = z.infer<typeof proyectoSchema>
 export const bimImportSchema = z.object({
   proyecto_id: z.string().uuid('ID de proyecto inválido'),
   elementos: z.array(z.object({
-    categoria_revit: z.string(),
+    revit_id: z.string().optional(),
+    revit_categoria: z.string().optional(),
     familia: z.string(),
     tipo: z.string(),
     area: z.number().optional(),
@@ -33,12 +35,11 @@ export const bimImportSchema = z.object({
 export type BimImportInput = z.infer<typeof bimImportSchema>
 
 export const partidaSugerenciaSchema = z.object({
-  proyecto_id: z.string().uuid(),
-  nombre: z.string(),
+  nombre_sugerido: z.string().min(1, 'El nombre es obligatorio'),
+  unidad_sugerida: z.string().optional(),
   descripcion: z.string().optional(),
-  unidad: z.string(),
-  tipo_proyecto: z.string().optional(),
-  fase: z.string().optional(),
+  origen: z.enum(['ia', 'usuario', 'bim']).optional(),
+  contexto: z.record(z.string(), z.any()).optional(),
 })
 
 export type PartidaSugerenciaInput = z.infer<typeof partidaSugerenciaSchema>
