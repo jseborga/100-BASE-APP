@@ -9,7 +9,8 @@ import { Input } from '@/components/ui/input'
 import {
   ArrowLeft, MapPin, Building2, Calendar, Bot, FileSpreadsheet,
   Upload, Trash2, Check, X, Pencil, Plus, ChevronDown, ChevronRight, Download,
-  LayoutTemplate, Loader2,
+  LayoutTemplate, Loader2, Box, RefreshCw, CheckCircle2, AlertCircle, Clock,
+  Search,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -60,6 +61,40 @@ interface ProyectoDetail {
   partidas: PartidaProyecto[]
 }
 
+interface BimImport {
+  id: string
+  archivo_nombre: string
+  total_elementos: number
+  estado: string
+  created_at: string
+}
+
+interface BimElement {
+  id: string
+  revit_id: string
+  familia: string
+  tipo: string
+  parametros: Record<string, number>
+  metrado_calculado: number | null
+  estado: string
+  revit_categorias: { id: string; nombre: string; nombre_es: string } | null
+  partidas: { id: string; nombre: string; unidad: string; capitulo: string | null } | null
+}
+
+interface BimData {
+  imports: BimImport[]
+  elements: BimElement[]
+  count: number
+  latest_import_id?: string
+}
+
+const ESTADO_BIM: Record<string, { label: string; icon: typeof Clock; color: string }> = {
+  pendiente: { label: 'Pendiente', icon: Clock, color: 'text-amber-600 bg-amber-50' },
+  mapeado: { label: 'Mapeado', icon: CheckCircle2, color: 'text-blue-600 bg-blue-50' },
+  confirmado: { label: 'Confirmado', icon: Check, color: 'text-green-600 bg-green-50' },
+  sin_match: { label: 'Sin match', icon: AlertCircle, color: 'text-red-600 bg-red-50' },
+}
+
 const ESTADOS: Record<string, { label: string; color: string }> = {
   activo: { label: 'Activo', color: 'bg-emerald-100 text-emerald-800' },
   borrador: { label: 'Borrador', color: 'bg-gray-100 text-gray-700' },
@@ -88,6 +123,16 @@ export default function ProyectoDetailPage() {
   const [plantillaPreview, setPlantillaPreview] = useState<{ nuevas: number; ya_en_proyecto: number } | null>(null)
   const [plantillaError, setPlantillaError] = useState<string | null>(null)
 
+  // BIM state
+  const [bimData, setBimData] = useState<BimData | null>(null)
+  const [bimLoading, setBimLoading] = useState(false)
+  const [bimOpen, setBimOpen] = useState(false)
+  const [bimConfirming, setBimConfirming] = useState(false)
+  const [bimFilter, setBimFilter] = useState<string>('all')
+  const [bimSearch, setBimSearch] = useState('')
+  const [editingBimElement, setEditingBimElement] = useState<string | null>(null)
+  const [editBimMetrado, setEditBimMetrado] = useState('')
+
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch(`/api/proyectos/${proyectoId}`)
@@ -105,9 +150,65 @@ export default function ProyectoDetailPage() {
     }
   }, [proyectoId])
 
+  const fetchBimData = useCallback(async () => {
+    setBimLoading(true)
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/bim`)
+      if (!res.ok) throw new Error('Error loading BIM data')
+      const data = await res.json()
+      setBimData(data as BimData)
+      if (data.imports?.length > 0) setBimOpen(true)
+    } catch (err) {
+      console.error('BIM fetch error:', err)
+    } finally {
+      setBimLoading(false)
+    }
+  }, [proyectoId])
+
+  const handleBimConfirm = async (elementIds?: string[]) => {
+    if (!bimData?.latest_import_id) return
+    setBimConfirming(true)
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          importacion_id: bimData.latest_import_id,
+          elemento_ids: elementIds,
+        }),
+      })
+      if (!res.ok) throw new Error('Error confirming BIM match')
+      await Promise.all([fetchData(), fetchBimData()])
+    } catch (err) {
+      console.error('BIM confirm error:', err)
+    } finally {
+      setBimConfirming(false)
+    }
+  }
+
+  const handleBimUpdateMetrado = async (elementId: string) => {
+    const value = parseFloat(editBimMetrado)
+    if (isNaN(value) || value < 0) return
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ elemento_id: elementId, metrado_override: value }),
+      })
+      if (!res.ok) throw new Error('Error updating metrado')
+      setEditingBimElement(null)
+      await fetchBimData()
+    } catch (err) {
+      console.error('BIM update error:', err)
+    }
+  }
+
   useEffect(() => {
-    if (proyectoId) fetchData()
-  }, [proyectoId, fetchData])
+    if (proyectoId) {
+      fetchData()
+      fetchBimData()
+    }
+  }, [proyectoId, fetchData, fetchBimData])
 
   const handleUpdateMetrado = async (ppId: string) => {
     const value = parseFloat(editValue)
@@ -494,6 +595,279 @@ export default function ProyectoDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* BIM Section */}
+      {bimData && bimData.imports.length > 0 && (() => {
+        const elements = bimData.elements || []
+        const filtered = elements.filter(el => {
+          if (bimFilter !== 'all' && el.estado !== bimFilter) return false
+          if (bimSearch) {
+            const s = bimSearch.toLowerCase()
+            return (
+              el.tipo.toLowerCase().includes(s) ||
+              el.familia.toLowerCase().includes(s) ||
+              el.revit_categorias?.nombre_es?.toLowerCase().includes(s) ||
+              el.partidas?.nombre?.toLowerCase().includes(s) ||
+              el.revit_id.toLowerCase().includes(s)
+            )
+          }
+          return true
+        })
+        const mapeados = elements.filter(e => e.estado === 'mapeado').length
+        const confirmados = elements.filter(e => e.estado === 'confirmado').length
+        const pendientes = elements.filter(e => e.estado === 'pendiente').length
+        const sinMatch = elements.filter(e => e.estado === 'sin_match').length
+        const latestImport = bimData.imports[0]
+
+        return (
+          <Card>
+            <CardHeader className="pb-3">
+              <button
+                onClick={() => setBimOpen(!bimOpen)}
+                className="flex items-center justify-between w-full text-left"
+              >
+                <div className="flex items-center gap-3">
+                  {bimOpen
+                    ? <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                    : <ChevronRight className="w-5 h-5 text-muted-foreground" />}
+                  <Box className="w-5 h-5 text-indigo-600" />
+                  <div>
+                    <CardTitle className="text-base">Mapeo BIM</CardTitle>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {latestImport.archivo_nombre} · {elements.length} elementos · {new Date(latestImport.created_at).toLocaleDateString('es-BO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {mapeados > 0 && (
+                    <Badge variant="outline" className="text-blue-600 bg-blue-50 text-[10px]">
+                      {mapeados} mapeados
+                    </Badge>
+                  )}
+                  {confirmados > 0 && (
+                    <Badge variant="outline" className="text-green-600 bg-green-50 text-[10px]">
+                      {confirmados} confirmados
+                    </Badge>
+                  )}
+                  {pendientes > 0 && (
+                    <Badge variant="outline" className="text-amber-600 bg-amber-50 text-[10px]">
+                      {pendientes} pendientes
+                    </Badge>
+                  )}
+                  {sinMatch > 0 && (
+                    <Badge variant="outline" className="text-red-600 bg-red-50 text-[10px]">
+                      {sinMatch} sin match
+                    </Badge>
+                  )}
+                </div>
+              </button>
+            </CardHeader>
+
+            {bimOpen && (
+              <CardContent className="space-y-3">
+                {/* Import history (if multiple) */}
+                {bimData.imports.length > 1 && (
+                  <div className="flex gap-2 flex-wrap text-xs text-muted-foreground">
+                    {bimData.imports.map((imp, i) => (
+                      <span key={imp.id} className={i === 0 ? 'font-medium text-foreground' : ''}>
+                        {imp.archivo_nombre} ({imp.total_elementos} elem, {imp.estado})
+                        {i < bimData.imports.length - 1 && ' · '}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Filters + Actions */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="relative flex-1 max-w-xs">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Buscar elemento..."
+                      value={bimSearch}
+                      onChange={e => setBimSearch(e.target.value)}
+                      className="h-8 pl-8 text-xs"
+                    />
+                  </div>
+                  <select
+                    value={bimFilter}
+                    onChange={e => setBimFilter(e.target.value)}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                  >
+                    <option value="all">Todos ({elements.length})</option>
+                    <option value="mapeado">Mapeados ({mapeados})</option>
+                    <option value="confirmado">Confirmados ({confirmados})</option>
+                    <option value="pendiente">Pendientes ({pendientes})</option>
+                    <option value="sin_match">Sin match ({sinMatch})</option>
+                  </select>
+                  <div className="ml-auto flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 text-xs"
+                      onClick={() => fetchBimData()}
+                      disabled={bimLoading}
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${bimLoading ? 'animate-spin' : ''}`} />
+                      Actualizar
+                    </Button>
+                    {mapeados > 0 && (
+                      <Button
+                        size="sm"
+                        className="h-8 gap-1.5 text-xs"
+                        onClick={() => handleBimConfirm()}
+                        disabled={bimConfirming}
+                      >
+                        {bimConfirming ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        )}
+                        Confirmar {mapeados} mapeados
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Elements table */}
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="grid grid-cols-[140px_1fr_1fr_100px_80px_80px_60px] gap-2 px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wider bg-muted/50 border-b">
+                    <span>Categoria Revit</span>
+                    <span>Familia / Tipo</span>
+                    <span>Partida asignada</span>
+                    <span className="text-right">Metrado</span>
+                    <span className="text-center">Unidad</span>
+                    <span className="text-center">Estado</span>
+                    <span></span>
+                  </div>
+
+                  <div className="max-h-[500px] overflow-y-auto divide-y">
+                    {filtered.length === 0 ? (
+                      <div className="py-8 text-center text-sm text-muted-foreground">
+                        {bimSearch ? 'No se encontraron elementos' : 'No hay elementos en esta importación'}
+                      </div>
+                    ) : (
+                      filtered.map(el => {
+                        const estadoInfo = ESTADO_BIM[el.estado] || ESTADO_BIM.pendiente
+                        const EstadoIcon = estadoInfo.icon
+                        const isEditing = editingBimElement === el.id
+
+                        return (
+                          <div
+                            key={el.id}
+                            className="group grid grid-cols-[140px_1fr_1fr_100px_80px_80px_60px] gap-2 items-center px-3 py-2 hover:bg-muted/30 transition-colors"
+                          >
+                            {/* Categoria */}
+                            <span className="text-xs text-muted-foreground truncate" title={el.revit_categorias?.nombre || ''}>
+                              {el.revit_categorias?.nombre_es || el.revit_categorias?.nombre || '—'}
+                            </span>
+
+                            {/* Familia / Tipo */}
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium truncate" title={el.tipo}>{el.tipo}</p>
+                              <p className="text-[10px] text-muted-foreground truncate">{el.familia} · {el.revit_id}</p>
+                            </div>
+
+                            {/* Partida asignada */}
+                            <div className="min-w-0">
+                              {el.partidas ? (
+                                <p className="text-xs truncate" title={el.partidas.nombre}>
+                                  {el.partidas.nombre}
+                                </p>
+                              ) : (
+                                <span className="text-xs text-muted-foreground italic">Sin asignar</span>
+                              )}
+                            </div>
+
+                            {/* Metrado */}
+                            <div className="text-right">
+                              {isEditing ? (
+                                <div className="flex items-center gap-0.5 justify-end">
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={editBimMetrado}
+                                    onChange={e => setEditBimMetrado(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleBimUpdateMetrado(el.id)
+                                      if (e.key === 'Escape') setEditingBimElement(null)
+                                    }}
+                                    className="h-6 w-16 text-[11px] text-right"
+                                    autoFocus
+                                  />
+                                  <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => handleBimUpdateMetrado(el.id)}>
+                                    <Check className="w-2.5 h-2.5 text-green-600" />
+                                  </Button>
+                                  <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setEditingBimElement(null)}>
+                                    <X className="w-2.5 h-2.5" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    setEditingBimElement(el.id)
+                                    setEditBimMetrado((el.metrado_calculado ?? 0).toString())
+                                  }}
+                                  className="text-xs font-mono font-medium hover:text-primary transition-colors inline-flex items-center gap-0.5"
+                                  title="Editar metrado"
+                                >
+                                  {el.metrado_calculado != null ? el.metrado_calculado.toFixed(2) : '—'}
+                                  <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-40" />
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Unidad */}
+                            <span className="text-[11px] text-center text-muted-foreground">
+                              {el.partidas?.unidad || '—'}
+                            </span>
+
+                            {/* Estado */}
+                            <div className="flex justify-center">
+                              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${estadoInfo.color}`}>
+                                <EstadoIcon className="w-3 h-3" />
+                                {estadoInfo.label}
+                              </span>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex justify-end">
+                              {el.estado === 'mapeado' && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 opacity-0 group-hover:opacity-100 text-green-600"
+                                  onClick={() => handleBimConfirm([el.id])}
+                                  title="Confirmar este elemento"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Summary */}
+                {elements.length > 0 && (
+                  <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
+                    <span>
+                      {filtered.length} de {elements.length} elementos
+                      {bimSearch && ` (filtro: "${bimSearch}")`}
+                    </span>
+                    <span>
+                      Metrado total: {filtered.reduce((s, e) => s + (e.metrado_calculado || 0), 0).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </CardContent>
+            )}
+          </Card>
+        )
+      })()}
 
       {/* Partidas Section */}
       <Card>
