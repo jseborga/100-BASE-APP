@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdmin } from '@/lib/webhooks/auth'
 
-// GET /api/proyectos/[id]/bim — BIM imports + elements for a project
+// ============================================================
+// GET /api/proyectos/[id]/bim — BIM imports + elements
+//   ?import_id=xxx  → elements for that import (default: latest)
+// ============================================================
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -10,22 +14,26 @@ export async function GET(
   const admin = getAdmin()
 
   try {
-    // Get imports for this project
+    const { searchParams } = new URL(request.url)
+    const requestedImportId = searchParams.get('import_id')
+
+    // Get ALL imports for this project
     const { data: imports, error: impErr } = await admin
       .from('bim_importaciones')
-      .select('id, archivo_nombre, total_elementos, estado, created_at')
+      .select('id, archivo_nombre, total_elementos, elementos_mapeados, estado, created_at')
       .eq('proyecto_id', proyectoId)
       .order('created_at', { ascending: false })
 
     if (impErr) throw new Error(impErr.message)
 
-    // If no imports, return empty
     if (!imports || imports.length === 0) {
       return NextResponse.json({ imports: [], elements: [], count: 0 })
     }
 
-    // Get elements for the latest import (with partida info)
-    const latestImportId = imports[0].id
+    // Pick which import to show: requested or latest
+    const activeImportId = requestedImportId || imports[0].id
+
+    // Get elements for the active import
     const { data: elements, error: elemErr } = await admin
       .from('bim_elementos')
       .select(`
@@ -35,22 +43,20 @@ export async function GET(
         revit_categorias(id, nombre, nombre_es),
         partidas(id, nombre, unidad, capitulo)
       `)
-      .eq('importacion_id', latestImportId)
+      .eq('importacion_id', activeImportId)
       .order('familia')
       .order('tipo')
 
     if (elemErr) throw new Error(elemErr.message)
 
-    // Get unique category IDs from elements to fetch suggested formulas
+    // Get category IDs for suggested formulas
     const categoryIds = [...new Set(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (elements || []).map((e: any) => e.revit_categoria_id).filter(Boolean)
     )] as string[]
 
-    // Fetch suggested formulas from revit_mapeos for these categories
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let suggestedMapeos: any[] = []
-
     if (categoryIds.length > 0) {
       const { data: mapeos } = await admin
         .from('revit_mapeos')
@@ -65,7 +71,6 @@ export async function GET(
 
       suggestedMapeos = (mapeos || []).map((m: Record<string, unknown>) => ({
         ...m,
-        // Supabase returns FK join as object (single) not array
         partidas: Array.isArray(m.partidas) ? m.partidas[0] || null : m.partidas,
       }))
     }
@@ -74,7 +79,7 @@ export async function GET(
       imports,
       elements: elements || [],
       count: elements?.length || 0,
-      latest_import_id: latestImportId,
+      active_import_id: activeImportId,
       suggested_mapeos: suggestedMapeos,
     })
   } catch (err) {
@@ -86,18 +91,89 @@ export async function GET(
   }
 }
 
-// PATCH /api/proyectos/[id]/bim — Update element match (override partida or metrado)
+// ============================================================
+// PATCH /api/proyectos/[id]/bim — Update elements or reset mappings
+//
+//  action: 'update'       → update single element (default)
+//  action: 'reset_group'  → release mapping for a group (familia+tipo)
+//  action: 'reset_import' → release ALL mappings in an import
+// ============================================================
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await params // validate route
+  await params
   const admin = getAdmin()
 
   try {
     const body = await request.json()
-    const { elemento_id, partida_id, metrado_override, estado } = body
+    const action = body.action || 'update'
 
+    // --- Reset a group of elements back to pendiente ---
+    if (action === 'reset_group') {
+      const { importacion_id, revit_categoria_id, familia, tipo } = body
+      if (!importacion_id) {
+        return NextResponse.json({ error: 'importacion_id requerido' }, { status: 400 })
+      }
+
+      let query = admin
+        .from('bim_elementos')
+        .update({
+          partida_id: null,
+          metrado_calculado: null,
+          formula_usada: null,
+          partida_nombre: null,
+          partida_codigo: null,
+          notas_mapeo: null,
+          estado: 'pendiente',
+        })
+        .eq('importacion_id', importacion_id)
+
+      if (revit_categoria_id) query = query.eq('revit_categoria_id', revit_categoria_id)
+      if (familia) query = query.eq('familia', familia)
+      if (tipo) query = query.eq('tipo', tipo)
+
+      const { error, count } = await query.select('id')
+      if (error) throw new Error(error.message)
+
+      return NextResponse.json({ reset: count || 0, message: `${count || 0} elementos liberados` })
+    }
+
+    // --- Reset ALL elements in an import ---
+    if (action === 'reset_import') {
+      const { importacion_id } = body
+      if (!importacion_id) {
+        return NextResponse.json({ error: 'importacion_id requerido' }, { status: 400 })
+      }
+
+      const { error, count } = await admin
+        .from('bim_elementos')
+        .update({
+          partida_id: null,
+          metrado_calculado: null,
+          formula_usada: null,
+          partida_nombre: null,
+          partida_codigo: null,
+          notas_mapeo: null,
+          estado: 'pendiente',
+        })
+        .eq('importacion_id', importacion_id)
+        .select('id')
+
+      if (error) throw new Error(error.message)
+
+      // Reset import status too
+      await admin
+        .from('bim_importaciones')
+        .update({ estado: 'pendiente', elementos_mapeados: 0 })
+        .eq('id', importacion_id)
+
+      return NextResponse.json({ reset: count || 0, message: `${count || 0} elementos liberados` })
+    }
+
+    // --- Default: update single element ---
+    const { elemento_id, partida_id, metrado_override, estado } = body
     if (!elemento_id) {
       return NextResponse.json({ error: 'elemento_id is required' }, { status: 400 })
     }
@@ -123,13 +199,16 @@ export async function PATCH(
   } catch (err) {
     console.error('BIM PATCH error:', err)
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Error updating element' },
+      { error: err instanceof Error ? err.message : 'Error updating' },
       { status: 500 }
     )
   }
 }
 
-// PUT /api/proyectos/[id]/bim — Map a group of elements (same familia+tipo) at once
+// ============================================================
+// PUT /api/proyectos/[id]/bim — Map a group of elements at once
+// ============================================================
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -148,7 +227,6 @@ export async function PUT(
       )
     }
 
-    // Build query for matching elements
     let query = admin
       .from('bim_elementos')
       .select('id, parametros')
@@ -164,14 +242,13 @@ export async function PUT(
       return NextResponse.json({ error: 'No se encontraron elementos' }, { status: 404 })
     }
 
-    // Get partida info for write-back fields
+    // Get partida info
     const { data: partida } = await admin
       .from('partidas')
       .select('nombre, unidad')
       .eq('id', partida_id)
       .single()
 
-    // Get localización code if available
     let partidaCodigo: string | null = null
     if (partida) {
       const { data: loc } = await admin
@@ -183,7 +260,6 @@ export async function PUT(
       if (loc) partidaCodigo = loc.codigo_local
     }
 
-    // Evaluate formula for each element and update
     let mapped = 0
     let errors = 0
 
@@ -207,7 +283,6 @@ export async function PUT(
         if (updateErr) errors++
         else mapped++
       } else {
-        // Formula didn't evaluate — mark as sin_match
         await admin
           .from('bim_elementos')
           .update({ estado: 'sin_match', formula_usada: formula })
@@ -236,7 +311,6 @@ function evaluateFormula(formula: string, params: Record<string, number>): numbe
         expr = expr.replace(new RegExp(`\\b${key}\\b`, 'g'), String(val))
       }
     }
-    // Only allow numbers, operators, parentheses, spaces
     if (/[^0-9+\-*/().eE\s]/.test(expr)) return null
     const result = Function(`"use strict"; return (${expr})`)()
     return typeof result === 'number' && isFinite(result) ? result : null
@@ -245,7 +319,10 @@ function evaluateFormula(formula: string, params: Record<string, number>): numbe
   }
 }
 
-// POST /api/proyectos/[id]/bim — Confirm matched elements → create proyecto_partidas
+// ============================================================
+// POST /api/proyectos/[id]/bim — Confirm matched → proyecto_partidas
+// ============================================================
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -261,7 +338,6 @@ export async function POST(
       return NextResponse.json({ error: 'importacion_id is required' }, { status: 400 })
     }
 
-    // Get matched elements to confirm
     let query = admin
       .from('bim_elementos')
       .select('id, partida_id, metrado_calculado, estado')
@@ -280,7 +356,6 @@ export async function POST(
       return NextResponse.json({ error: 'No matched elements to confirm' }, { status: 400 })
     }
 
-    // Aggregate metrados by partida_id
     const aggregated = new Map<string, number>()
     for (const el of elements) {
       const current = aggregated.get(el.partida_id) || 0
@@ -290,7 +365,6 @@ export async function POST(
     let created = 0
     let updated = 0
 
-    // Upsert proyecto_partidas
     for (const [partidaId, metrado] of aggregated) {
       const { data: existing } = await admin
         .from('proyecto_partidas')
@@ -322,14 +396,12 @@ export async function POST(
       }
     }
 
-    // Mark elements as confirmed
     const elementIds = elements.map(e => e.id)
     await admin
       .from('bim_elementos')
       .update({ estado: 'confirmado' })
       .in('id', elementIds)
 
-    // Update import status
     await admin
       .from('bim_importaciones')
       .update({ estado: 'confirmado' })
@@ -339,12 +411,61 @@ export async function POST(
       created,
       updated,
       total_partidas: created + updated,
-      message: `${created} partidas created, ${updated} updated with BIM metrados`,
+      message: `${created} partidas creadas, ${updated} actualizadas`,
     })
   } catch (err) {
     console.error('BIM POST error:', err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Error confirming BIM match' },
+      { status: 500 }
+    )
+  }
+}
+
+// ============================================================
+// DELETE /api/proyectos/[id]/bim?import_id=xxx — Delete an import
+// ============================================================
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: proyectoId } = await params
+  const admin = getAdmin()
+
+  try {
+    const { searchParams } = new URL(request.url)
+    const importId = searchParams.get('import_id')
+
+    if (!importId) {
+      return NextResponse.json({ error: 'import_id es requerido' }, { status: 400 })
+    }
+
+    // Verify import belongs to this project
+    const { data: imp } = await admin
+      .from('bim_importaciones')
+      .select('id')
+      .eq('id', importId)
+      .eq('proyecto_id', proyectoId)
+      .maybeSingle()
+
+    if (!imp) {
+      return NextResponse.json({ error: 'Importación no encontrada' }, { status: 404 })
+    }
+
+    // Elements are deleted via CASCADE
+    const { error } = await admin
+      .from('bim_importaciones')
+      .delete()
+      .eq('id', importId)
+
+    if (error) throw new Error(error.message)
+
+    return NextResponse.json({ deleted: true, message: 'Importación eliminada' })
+  } catch (err) {
+    console.error('BIM DELETE error:', err)
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Error deleting import' },
       { status: 500 }
     )
   }

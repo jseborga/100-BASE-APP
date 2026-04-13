@@ -65,6 +65,7 @@ interface BimImport {
   id: string
   archivo_nombre: string
   total_elementos: number
+  elementos_mapeados: number | null
   estado: string
   created_at: string
 }
@@ -117,7 +118,7 @@ interface BimData {
   imports: BimImport[]
   elements: BimElement[]
   count: number
-  latest_import_id?: string
+  active_import_id?: string
   suggested_mapeos?: SuggestedMapeo[]
 }
 
@@ -165,9 +166,13 @@ export default function ProyectoDetailPage() {
   const [bimSearch, setBimSearch] = useState('')
   const [editingBimElement, setEditingBimElement] = useState<string | null>(null)
   const [editBimMetrado, setEditBimMetrado] = useState('')
+  const [activeImportId, setActiveImportId] = useState<string | null>(null)
+  const [deletingImport, setDeletingImport] = useState<string | null>(null)
+  const [resettingGroup, setResettingGroup] = useState<string | null>(null)
+  const [resettingImport, setResettingImport] = useState(false)
 
   // Group mapping state
-  const [mappingGroup, setMappingGroup] = useState<string | null>(null) // group key being mapped
+  const [mappingGroup, setMappingGroup] = useState<string | null>(null)
   const [mapFormula, setMapFormula] = useState('')
   const [mapPartidaSearch, setMapPartidaSearch] = useState('')
   const [mapPartidaResults, setMapPartidaResults] = useState<{id:string;nombre:string;unidad:string;capitulo:string|null}[]>([])
@@ -194,13 +199,17 @@ export default function ProyectoDetailPage() {
     }
   }, [proyectoId])
 
-  const fetchBimData = useCallback(async () => {
+  const fetchBimData = useCallback(async (importId?: string) => {
     setBimLoading(true)
     try {
-      const res = await fetch(`/api/proyectos/${proyectoId}/bim`)
+      const url = importId
+        ? `/api/proyectos/${proyectoId}/bim?import_id=${importId}`
+        : `/api/proyectos/${proyectoId}/bim`
+      const res = await fetch(url)
       if (!res.ok) throw new Error('Error loading BIM data')
       const data = await res.json()
       setBimData(data as BimData)
+      setActiveImportId(data.active_import_id || null)
       if (data.imports?.length > 0) setBimOpen(true)
     } catch (err) {
       console.error('BIM fetch error:', err)
@@ -210,19 +219,19 @@ export default function ProyectoDetailPage() {
   }, [proyectoId])
 
   const handleBimConfirm = async (elementIds?: string[]) => {
-    if (!bimData?.latest_import_id) return
+    if (!activeImportId) return
     setBimConfirming(true)
     try {
       const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          importacion_id: bimData.latest_import_id,
+          importacion_id: activeImportId,
           elemento_ids: elementIds,
         }),
       })
       if (!res.ok) throw new Error('Error confirming BIM match')
-      await Promise.all([fetchData(), fetchBimData()])
+      await Promise.all([fetchData(), fetchBimData(activeImportId)])
     } catch (err) {
       console.error('BIM confirm error:', err)
     } finally {
@@ -247,6 +256,70 @@ export default function ProyectoDetailPage() {
     }
   }
 
+  const handleResetGroup = async (group: BimGroup) => {
+    if (!activeImportId) return
+    setResettingGroup(group.key)
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reset_group',
+          importacion_id: activeImportId,
+          revit_categoria_id: group.categoriaId,
+          familia: group.familia,
+          tipo: group.tipo,
+        }),
+      })
+      if (!res.ok) throw new Error('Error resetting group')
+      await fetchBimData(activeImportId)
+    } catch (err) {
+      console.error('Reset group error:', err)
+    } finally {
+      setResettingGroup(null)
+    }
+  }
+
+  const handleResetImport = async () => {
+    if (!activeImportId) return
+    setResettingImport(true)
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset_import', importacion_id: activeImportId }),
+      })
+      if (!res.ok) throw new Error('Error resetting import')
+      await Promise.all([fetchData(), fetchBimData(activeImportId)])
+    } catch (err) {
+      console.error('Reset import error:', err)
+    } finally {
+      setResettingImport(false)
+    }
+  }
+
+  const handleDeleteImport = async (importId: string) => {
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/bim?import_id=${importId}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) throw new Error('Error deleting import')
+      setDeletingImport(null)
+      // Reload — if we deleted the active one, it'll fall back to the next
+      await fetchBimData()
+    } catch (err) {
+      console.error('Delete import error:', err)
+    }
+  }
+
+  const handleSwitchImport = (importId: string) => {
+    setActiveImportId(importId)
+    setMappingGroup(null)
+    setExpandedGroups(new Set())
+    setBimFilter('all')
+    fetchBimData(importId)
+  }
+
   // Partida search for group mapping
   useEffect(() => {
     if (mapPartidaSearch.length < 2) { setMapPartidaResults([]); return }
@@ -269,14 +342,14 @@ export default function ProyectoDetailPage() {
   }, [mappingGroup])
 
   const handleGroupMap = async (group: BimGroup) => {
-    if (!mapSelectedPartida || !mapFormula.trim() || !bimData?.latest_import_id) return
+    if (!mapSelectedPartida || !mapFormula.trim() || !activeImportId) return
     setMapSaving(true)
     try {
       const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          importacion_id: bimData.latest_import_id,
+          importacion_id: activeImportId,
           revit_categoria_id: group.categoriaId,
           familia: group.familia,
           tipo: group.tipo,
@@ -293,7 +366,7 @@ export default function ProyectoDetailPage() {
       setMapFormula('')
       setMapSelectedPartida(null)
       setMapPartidaSearch('')
-      await fetchBimData()
+      await fetchBimData(activeImportId || undefined)
     } catch (err) {
       console.error('Group map error:', err)
     } finally {
@@ -823,14 +896,8 @@ export default function ProyectoDetailPage() {
         const confirmados = elements.filter(e => e.estado === 'confirmado').length
         const pendientes = elements.filter(e => e.estado === 'pendiente').length
         const sinMatch = elements.filter(e => e.estado === 'sin_match').length
-        const latestImport = bimData.imports[0]
-
-        // Group categories for summary
-        const categoryCounts = new Map<string, number>()
-        for (const g of bimGroups) {
-          const c = g.categoriaEs
-          categoryCounts.set(c, (categoryCounts.get(c) || 0) + g.elements.length)
-        }
+        const activeImport = bimData.imports.find(i => i.id === activeImportId) || bimData.imports[0]
+        const hasMappedOrConfirmed = mapeados > 0 || confirmados > 0
 
         return (
           <Card>
@@ -845,9 +912,9 @@ export default function ProyectoDetailPage() {
                     : <ChevronRight className="w-5 h-5 text-muted-foreground" />}
                   <Box className="w-5 h-5 text-indigo-600" />
                   <div>
-                    <CardTitle className="text-base">Mapeo BIM — {proyecto.nombre}</CardTitle>
+                    <CardTitle className="text-base">Mapeo BIM</CardTitle>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {latestImport.archivo_nombre} · {elements.length} elementos en {bimGroups.length} grupos · {new Date(latestImport.created_at).toLocaleDateString('es-BO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      {bimData.imports.length} importacion{bimData.imports.length !== 1 ? 'es' : ''} · {elements.length} elementos en {bimGroups.length} grupos
                     </p>
                   </div>
                 </div>
@@ -878,6 +945,83 @@ export default function ProyectoDetailPage() {
 
             {bimOpen && (
               <CardContent className="space-y-3">
+                {/* Import selector (when multiple) */}
+                {bimData.imports.length > 1 && (
+                  <div className="flex items-center gap-2 flex-wrap pb-1 border-b">
+                    <span className="text-[11px] font-medium text-muted-foreground">Importaciones:</span>
+                    {bimData.imports.map(imp => (
+                      <div key={imp.id} className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleSwitchImport(imp.id)}
+                          className={`px-2.5 py-1 rounded-md text-xs transition-colors ${
+                            imp.id === activeImportId
+                              ? 'bg-indigo-100 text-indigo-800 font-medium'
+                              : 'bg-muted text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          {imp.archivo_nombre || 'Sin nombre'} ({imp.total_elementos})
+                          <span className="ml-1 text-[10px] opacity-60">
+                            {new Date(imp.created_at).toLocaleDateString('es-BO', { day: '2-digit', month: 'short' })}
+                          </span>
+                        </button>
+                        {deletingImport === imp.id ? (
+                          <div className="flex items-center gap-0.5">
+                            <Button variant="ghost" size="icon" className="h-5 w-5 text-destructive" onClick={() => handleDeleteImport(imp.id)}>
+                              <Check className="w-3 h-3" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setDeletingImport(null)}>
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 opacity-0 hover:opacity-100 text-destructive"
+                            onClick={() => setDeletingImport(imp.id)}
+                            title="Eliminar importación"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Active import info */}
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{activeImport.archivo_nombre}</span>
+                  <span>{elements.length} elementos</span>
+                  <span>{new Date(activeImport.created_at).toLocaleDateString('es-BO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                  {bimData.imports.length === 1 && (
+                    <>
+                      <span className="ml-auto" />
+                      {deletingImport === activeImport.id ? (
+                        <div className="flex items-center gap-1">
+                          <span className="text-destructive text-[11px]">Eliminar?</span>
+                          <Button variant="ghost" size="icon" className="h-5 w-5 text-destructive" onClick={() => handleDeleteImport(activeImport.id)}>
+                            <Check className="w-3 h-3" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setDeletingImport(null)}>
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 gap-1 text-[10px] text-destructive hover:text-destructive"
+                          onClick={() => setDeletingImport(activeImport.id)}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Eliminar
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+
                 {/* Filter tabs + Actions */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
@@ -913,11 +1057,27 @@ export default function ProyectoDetailPage() {
                   </div>
 
                   <div className="ml-auto flex gap-2">
+                    {hasMappedOrConfirmed && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 text-xs text-amber-700 hover:text-amber-800 border-amber-200 hover:border-amber-300 hover:bg-amber-50"
+                        onClick={handleResetImport}
+                        disabled={resettingImport}
+                      >
+                        {resettingImport ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        )}
+                        Liberar todo
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
                       className="h-8 gap-1.5 text-xs"
-                      onClick={() => fetchBimData()}
+                      onClick={() => fetchBimData(activeImportId || undefined)}
                       disabled={bimLoading}
                     >
                       <RefreshCw className={`w-3.5 h-3.5 ${bimLoading ? 'animate-spin' : ''}`} />
@@ -1019,6 +1179,17 @@ export default function ProyectoDetailPage() {
                               ) : group.estado === 'mapeado' ? (
                                 <div className="flex gap-1">
                                   <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 gap-1 text-xs text-amber-700 hover:text-amber-800 hover:bg-amber-50"
+                                    onClick={(e) => { e.stopPropagation(); handleResetGroup(group) }}
+                                    disabled={resettingGroup === group.key}
+                                    title="Liberar mapeo de este grupo"
+                                  >
+                                    {resettingGroup === group.key ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                                    Liberar
+                                  </Button>
+                                  <Button
                                     variant="outline"
                                     size="sm"
                                     className="h-7 gap-1 text-xs"
@@ -1040,6 +1211,18 @@ export default function ProyectoDetailPage() {
                                     Confirmar
                                   </Button>
                                 </div>
+                              ) : group.estado === 'confirmado' ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 gap-1 text-xs text-amber-700 hover:text-amber-800 hover:bg-amber-50"
+                                  onClick={(e) => { e.stopPropagation(); handleResetGroup(group) }}
+                                  disabled={resettingGroup === group.key}
+                                  title="Liberar mapeo confirmado"
+                                >
+                                  {resettingGroup === group.key ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                                  Liberar
+                                </Button>
                               ) : null}
                             </div>
                           </div>
