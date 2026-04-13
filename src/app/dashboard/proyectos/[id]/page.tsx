@@ -76,12 +76,12 @@ interface BimElement {
   familia: string
   tipo: string
   parametros: Record<string, number>
+  metadata: Record<string, string> | null
+  notas_ia: Record<string, string> | null
+  nota_familia: string | null
   metrado_calculado: number | null
   estado: string
-  formula_usada: string | null
-  notas_mapeo: string | null
-  partida_codigo: string | null
-  partida_nombre: string | null
+  partida_id: string | null
   revit_categorias: { id: string; nombre: string; nombre_es: string } | null
   partidas: { id: string; nombre: string; unidad: string; capitulo: string | null } | null
 }
@@ -96,9 +96,11 @@ interface BimGroup {
   tipo: string
   elements: BimElement[]
   sampleParams: Record<string, number>
+  sampleMetadata: Record<string, string>
+  notasIA: Record<string, string>
+  notaFamilia: string | null
   estado: string // dominant estado in the group
   partida: { id: string; nombre: string; unidad: string } | null
-  formula: string | null
   metradoTotal: number
   suggestions: SuggestedMapeo[] // suggested formulas from revit_mapeos
 }
@@ -449,7 +451,7 @@ export default function ProyectoDetailPage() {
 
   const startMapping = (groupKey: string, group: BimGroup) => {
     setMappingGroup(groupKey)
-    setMapFormula(group.formula || '')
+    setMapFormula('')
     if (group.partida) {
       setMapSelectedPartida(group.partida)
       setMapPartidaSearch(group.partida.nombre)
@@ -481,14 +483,28 @@ export default function ProyectoDetailPage() {
     }
     return Array.from(map.entries()).map(([key, elements]) => {
       const first = elements[0]
-      // Merge all params to show available ones
+      // Merge all numeric params
       const allParams: Record<string, number> = {}
+      const allMeta: Record<string, string> = {}
+      const allNotasIA: Record<string, string> = {}
+      let notaFam: string | null = null
       for (const el of elements) {
         if (el.parametros) {
           for (const [k, v] of Object.entries(el.parametros)) {
             if (typeof v === 'number' && !(k in allParams)) allParams[k] = v
           }
         }
+        if (el.metadata) {
+          for (const [k, v] of Object.entries(el.metadata)) {
+            if (!(k in allMeta)) allMeta[k] = v
+          }
+        }
+        if (el.notas_ia) {
+          for (const [k, v] of Object.entries(el.notas_ia)) {
+            if (!(k in allNotasIA)) allNotasIA[k] = v
+          }
+        }
+        if (el.nota_familia && !notaFam) notaFam = el.nota_familia
       }
       // Dominant estado
       const estados = elements.map(e => e.estado)
@@ -513,9 +529,11 @@ export default function ProyectoDetailPage() {
         tipo: first.tipo,
         elements,
         sampleParams: allParams,
+        sampleMetadata: allMeta,
+        notasIA: allNotasIA,
+        notaFamilia: notaFam,
         estado: dominantEstado,
         partida: first.partidas ? { id: first.partidas.id, nombre: first.partidas.nombre, unidad: first.partidas.unidad } : null,
-        formula: first.formula_usada,
         metradoTotal,
         suggestions,
       }
@@ -1253,12 +1271,12 @@ export default function ProyectoDetailPage() {
                                 <span className="text-sm truncate">{group.tipo}</span>
                               </div>
                               {group.partida && (
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <span className="text-xs text-blue-700">{group.partida.nombre}</span>
-                                  {group.formula && (
-                                    <code className="text-[10px] bg-white/60 px-1.5 py-0.5 rounded font-mono text-muted-foreground">{group.formula}</code>
-                                  )}
-                                </div>
+                                <p className="text-xs text-blue-700 mt-0.5">{group.partida.nombre}</p>
+                              )}
+                              {group.notaFamilia && (
+                                <p className="text-[10px] text-violet-600 mt-0.5 italic truncate" title={group.notaFamilia}>
+                                  IA: {group.notaFamilia}
+                                </p>
                               )}
                             </div>
 
@@ -1502,11 +1520,60 @@ export default function ProyectoDetailPage() {
                             </div>
                           )}
 
-                          {/* Expanded: show individual elements */}
+                          {/* Expanded: show individual elements + group params summary */}
                           {isExpanded && (
                             <div className="border-t">
+                              {/* Group parameters summary */}
+                              <div className="bg-muted/20 px-3 py-2 border-b space-y-2">
+                                {/* Numeric parameters */}
+                                <div>
+                                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Parametros ({Object.keys(group.sampleParams).filter(k => group.sampleParams[k] > 0).length})</p>
+                                  <div className="flex flex-wrap gap-1">
+                                    {Object.entries(group.sampleParams)
+                                      .filter(([, v]) => v > 0)
+                                      .sort(([a], [b]) => a.localeCompare(b))
+                                      .map(([k, v]) => (
+                                        <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-background border text-[10px]">
+                                          <span className="font-mono font-medium text-indigo-700">{k}</span>
+                                          <span className="text-muted-foreground">= {v % 1 === 0 ? v : v.toFixed(2)}</span>
+                                        </span>
+                                      ))}
+                                  </div>
+                                </div>
+                                {/* Metadata */}
+                                {Object.keys(group.sampleMetadata).length > 0 && (
+                                  <div>
+                                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Metadata</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {Object.entries(group.sampleMetadata)
+                                        .filter(([, v]) => v && v.length > 0)
+                                        .map(([k, v]) => (
+                                          <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-50 border text-[10px]">
+                                            <span className="font-medium text-slate-600">{k}</span>
+                                            <span className="text-muted-foreground truncate max-w-[150px]">{v}</span>
+                                          </span>
+                                        ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {/* AI Notes */}
+                                {Object.keys(group.notasIA).length > 0 && (
+                                  <div>
+                                    <p className="text-[10px] font-medium text-violet-600 uppercase tracking-wider mb-1">Notas IA</p>
+                                    <div className="flex flex-col gap-0.5">
+                                      {Object.entries(group.notasIA).map(([k, v]) => (
+                                        <span key={k} className="text-[10px] text-violet-700">
+                                          <span className="font-mono font-medium">{k}:</span> {v}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Elements table */}
                               <div className="grid grid-cols-[1fr_1fr_100px_80px_80px] gap-2 px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider bg-muted/30 border-b">
-                                <span>Revit ID / Tipo</span>
+                                <span>Revit ID</span>
                                 <span>Partida</span>
                                 <span className="text-right">Metrado</span>
                                 <span className="text-center">Unidad</span>
@@ -1517,18 +1584,13 @@ export default function ProyectoDetailPage() {
                                   const elEstado = ESTADO_BIM[el.estado] || ESTADO_BIM.pendiente
                                   const ElIcon = elEstado.icon
                                   const isEditing = editingBimElement === el.id
+                                  const nivel = el.metadata?.nivel
                                   return (
                                     <div key={el.id} className="group/el grid grid-cols-[1fr_1fr_100px_80px_80px] gap-2 items-center px-3 py-1.5 hover:bg-muted/20 transition-colors">
                                       <div className="min-w-0">
                                         <p className="text-xs truncate">{el.revit_id}</p>
-                                        {Object.keys(el.parametros || {}).length > 0 && (
-                                          <p className="text-[10px] text-muted-foreground truncate">
-                                            {Object.entries(el.parametros)
-                                              .filter(([, v]) => typeof v === 'number' && v > 0)
-                                              .slice(0, 3)
-                                              .map(([k, v]) => `${k}=${(v as number).toFixed(1)}`)
-                                              .join(', ')}
-                                          </p>
+                                        {nivel && (
+                                          <p className="text-[10px] text-muted-foreground truncate">Nivel: {nivel}</p>
                                         )}
                                       </div>
                                       <div className="min-w-0">

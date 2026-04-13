@@ -19,16 +19,17 @@ export type ProyectoInput = z.infer<typeof proyectoSchema>
 
 export const bimImportSchema = z.object({
   proyecto_id: z.string().uuid('ID de proyecto inv\u00e1lido'),
+  archivo_nombre: z.string().optional(),
   elementos: z.array(z.object({
     revit_id: z.string().optional(),
-    revit_categoria: z.string().optional(),
+    unique_id: z.string().optional(),
+    categoria: z.string().optional(),
     familia: z.string(),
     tipo: z.string(),
-    area: z.number().optional(),
-    volumen: z.number().optional(),
-    longitud: z.number().optional(),
-    cantidad: z.number().optional(),
-    parametros: z.record(z.string(), z.any()).optional(),
+    parametros: z.record(z.string(), z.number()).optional(),
+    metadata: z.record(z.string(), z.string()).optional(),
+    notas_ia: z.record(z.string(), z.string()).optional(),
+    nota_familia: z.string().optional(),
   })),
 })
 

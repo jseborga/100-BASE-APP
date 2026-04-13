@@ -34,12 +34,12 @@ export async function GET(
     const activeImportId = requestedImportId || imports[0].id
 
     // Get elements for the active import
-    const { data: elements, error: elemErr } = await admin
+    const { data: rawElements, error: elemErr } = await admin
       .from('bim_elementos')
       .select(`
         id, revit_id, revit_categoria_id, familia, tipo, parametros,
-        metrado_calculado, estado, formula_usada, notas_mapeo,
-        partida_codigo, partida_nombre,
+        metrado_calculado, estado,
+        partida_id,
         revit_categorias(id, nombre, nombre_es),
         partidas(id, nombre, unidad, capitulo)
       `)
@@ -48,6 +48,39 @@ export async function GET(
       .order('tipo')
 
     if (elemErr) throw new Error(elemErr.message)
+
+    // Extract metadata/notas from JSONB parametros → clean structure
+    const elements = (rawElements || []).map((el: Record<string, unknown>) => {
+      const raw = (el.parametros || {}) as Record<string, unknown>
+      const parametros: Record<string, number> = {}
+      const metadata: Record<string, string> = {}
+      let notas_ia: Record<string, string> = {}
+      let nota_familia: string | null = null
+
+      for (const [k, v] of Object.entries(raw)) {
+        if (k === '_metadata' && typeof v === 'object' && v !== null) {
+          Object.assign(metadata, v)
+        } else if (k === '_notas_ia' && typeof v === 'object' && v !== null) {
+          notas_ia = v as Record<string, string>
+        } else if (k === '_nota_familia' && typeof v === 'string') {
+          nota_familia = v
+        } else if (k === '_unique_id' && typeof v === 'string') {
+          metadata.unique_id = v
+        } else if (k.startsWith('_') && typeof v === 'string') {
+          metadata[k.slice(1)] = v
+        } else if (typeof v === 'number') {
+          parametros[k] = v
+        }
+      }
+
+      return {
+        ...el,
+        parametros,
+        metadata: Object.keys(metadata).length > 0 ? metadata : null,
+        notas_ia: Object.keys(notas_ia).length > 0 ? notas_ia : null,
+        nota_familia,
+      }
+    })
 
     // Get category IDs for suggested formulas
     const categoryIds = [...new Set(
@@ -167,10 +200,6 @@ export async function PATCH(
         .update({
           partida_id: null,
           metrado_calculado: null,
-          formula_usada: null,
-          partida_nombre: null,
-          partida_codigo: null,
-          notas_mapeo: null,
           estado: 'pendiente',
         })
         .eq('importacion_id', importacion_id)
@@ -197,10 +226,6 @@ export async function PATCH(
         .update({
           partida_id: null,
           metrado_calculado: null,
-          formula_usada: null,
-          partida_nombre: null,
-          partida_codigo: null,
-          notas_mapeo: null,
           estado: 'pendiente',
         })
         .eq('importacion_id', importacion_id)
@@ -287,30 +312,18 @@ export async function PUT(
       return NextResponse.json({ error: 'No se encontraron elementos' }, { status: 404 })
     }
 
-    // Get partida info
-    const { data: partida } = await admin
-      .from('partidas')
-      .select('nombre, unidad')
-      .eq('id', partida_id)
-      .single()
-
-    let partidaCodigo: string | null = null
-    if (partida) {
-      const { data: loc } = await admin
-        .from('partida_localizaciones')
-        .select('codigo_local')
-        .eq('partida_id', partida_id)
-        .limit(1)
-        .maybeSingle()
-      if (loc) partidaCodigo = loc.codigo_local
-    }
-
     let mapped = 0
     let errors = 0
 
     for (const el of elements) {
-      const params = (el.parametros || {}) as Record<string, number>
-      const metrado = evaluateFormula(formula, params)
+      // Extract only numeric params for formula evaluation
+      const rawParams = (el.parametros || {}) as Record<string, unknown>
+      const numericParams: Record<string, number> = {}
+      for (const [k, v] of Object.entries(rawParams)) {
+        if (typeof v === 'number') numericParams[k] = v
+      }
+
+      const metrado = evaluateFormula(formula, numericParams)
 
       if (metrado !== null) {
         const { error: updateErr } = await admin
@@ -318,10 +331,7 @@ export async function PUT(
           .update({
             partida_id: partida_id,
             metrado_calculado: Math.round(metrado * 10000) / 10000,
-            formula_usada: formula,
             estado: 'mapeado',
-            partida_nombre: partida?.nombre || null,
-            partida_codigo: partidaCodigo,
           })
           .eq('id', el.id)
 
@@ -330,7 +340,7 @@ export async function PUT(
       } else {
         await admin
           .from('bim_elementos')
-          .update({ estado: 'sin_match', formula_usada: formula })
+          .update({ estado: 'sin_match' })
           .eq('id', el.id)
         errors++
       }
