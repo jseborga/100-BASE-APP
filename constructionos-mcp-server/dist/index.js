@@ -251,23 +251,25 @@ server.tool('get_bim_element_detail', 'Get full detail of a single BIM element i
     const result = await callWebhook('get_bim_element_detail', params);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
 });
-server.tool('create_revit_mapeo', 'Create a new mapping rule: Revit category → partida with formula. Formula uses element param names (Area, Volume, Length, Count, Width, Height, OpeningsArea, AreaBruta, etc.). Example formulas: "(Area - OpeningsArea) * 1.05", "Volume * 78.5", "Count".', {
+server.tool('create_revit_mapeo', 'Create a new mapping rule: Revit category → partida with formula + computation instructions. Instructions travel back to Revit as COS_NOTAS_MAPEO for documentation. Example formulas: "(Area - OpeningsArea) * 1.05", "Volume * 78.5", "Count".', {
     revit_categoria_id: zod_1.z.string().uuid().describe('Revit category UUID'),
     partida_id: zod_1.z.string().uuid().describe('Target partida UUID from catalog'),
     formula: zod_1.z.string().describe('Arithmetic formula using param names (e.g., "(Area - OpeningsArea) * 1.05")'),
     parametro_principal: zod_1.z.string().optional().describe('Main parameter (Area, Volume, Length, Count)'),
     descripcion: zod_1.z.string().optional().describe('Human description of this rule'),
+    instrucciones_computo: zod_1.z.string().optional().describe('How to compute/map this element. Travels back to Revit as COS_NOTAS_MAPEO.'),
     prioridad: zod_1.z.number().optional().describe('Evaluation priority (lower = first, default 10)'),
 }, async (params) => {
     const result = await callWebhook('create_revit_mapeo', params);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
 });
-server.tool('update_revit_mapeo', 'Update an existing mapping rule (formula, partida, priority, description).', {
+server.tool('update_revit_mapeo', 'Update an existing mapping rule (formula, partida, priority, description, instructions).', {
     mapeo_id: zod_1.z.string().uuid().describe('Mapeo UUID to update'),
     formula: zod_1.z.string().optional().describe('New formula'),
     partida_id: zod_1.z.string().uuid().optional().describe('New target partida UUID'),
     parametro_principal: zod_1.z.string().optional().describe('New main parameter'),
     descripcion: zod_1.z.string().optional().describe('New description'),
+    instrucciones_computo: zod_1.z.string().optional().describe('Computation instructions (travels to Revit)'),
     prioridad: zod_1.z.number().optional().describe('New priority'),
 }, async (params) => {
     const result = await callWebhook('update_revit_mapeo', params);
@@ -279,16 +281,17 @@ server.tool('delete_revit_mapeo', 'Delete a mapping rule.', {
     const result = await callWebhook('delete_revit_mapeo', params);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
 });
-server.tool('apply_mapping_to_element', 'Manually assign a partida to a BIM element with optional formula evaluation. Used by AI agent to suggest/apply mappings one element at a time.', {
+server.tool('apply_mapping_to_element', 'Manually assign a partida to a BIM element with optional formula evaluation and mapping notes. Notes travel back to Revit as COS_NOTAS_MAPEO.', {
     elemento_id: zod_1.z.string().uuid().describe('BIM element UUID'),
     partida_id: zod_1.z.string().uuid().describe('Partida UUID to assign'),
     formula: zod_1.z.string().optional().describe('Formula to evaluate for metrado (uses element params)'),
     metrado: zod_1.z.number().optional().describe('Direct metrado value (if not using formula)'),
+    notas_mapeo: zod_1.z.string().optional().describe('Computation instructions / how to map this element. Travels back to Revit.'),
 }, async (params) => {
     const result = await callWebhook('apply_mapping_to_element', params);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
 });
-server.tool('get_element_mappings', 'Get confirmed/mapped element results for Revit write-back. Returns revit_id → partida code + metrado for each mapped element.', {
+server.tool('get_element_mappings', 'Get mapped element results for Revit write-back. Returns revit_id → partida code + formula + metrado + notas_mapeo (for COS_* shared params).', {
     importacion_id: zod_1.z.string().uuid().optional().describe('Filter by import UUID'),
     proyecto_id: zod_1.z.string().uuid().optional().describe('Filter by project UUID'),
 }, async (params) => {

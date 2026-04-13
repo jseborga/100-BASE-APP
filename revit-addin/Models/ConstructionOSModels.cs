@@ -172,4 +172,56 @@ namespace RvtConstructionOS.Models
         [JsonPropertyName("capitulo")]
         public string? Capitulo { get; set; }
     }
+
+    // ============================================================
+    // Respuesta de get_element_mappings (write-back a Revit)
+    // ============================================================
+
+    public class ElementMappingsResponse
+    {
+        [JsonPropertyName("mappings")]
+        public List<ElementMappingDto> Mappings { get; set; } = new();
+
+        [JsonPropertyName("count")]
+        public int Count { get; set; }
+    }
+
+    public class ElementMappingDto
+    {
+        [JsonPropertyName("revit_id")]
+        public string? RevitId { get; set; }
+
+        [JsonPropertyName("unique_id")]
+        public string? UniqueId { get; set; }
+
+        [JsonPropertyName("categoria")]
+        public string? Categoria { get; set; }
+
+        [JsonPropertyName("familia")]
+        public string? Familia { get; set; }
+
+        [JsonPropertyName("tipo")]
+        public string? Tipo { get; set; }
+
+        [JsonPropertyName("partida_nombre")]
+        public string? PartidaNombre { get; set; }
+
+        [JsonPropertyName("partida_codigo")]
+        public string? PartidaCodigo { get; set; }
+
+        [JsonPropertyName("partida_unidad")]
+        public string? PartidaUnidad { get; set; }
+
+        [JsonPropertyName("formula")]
+        public string? Formula { get; set; }
+
+        [JsonPropertyName("metrado")]
+        public decimal? Metrado { get; set; }
+
+        [JsonPropertyName("notas_mapeo")]
+        public string? NotasMapeo { get; set; }
+
+        [JsonPropertyName("estado")]
+        public string Estado { get; set; } = "mapeado";
+    }
 }

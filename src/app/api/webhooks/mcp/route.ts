@@ -241,23 +241,23 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
     params: '{ elemento_id: string }',
   },
   create_revit_mapeo: {
-    description: 'Create a new mapping rule: Revit category → partida with formula. Formula uses param names (Area, Volume, Length, Count, Width, Height, OpeningsArea, etc.)',
-    params: '{ revit_categoria_id: string, partida_id: string, formula: string, parametro_principal?: string, descripcion?: string, prioridad?: number }',
+    description: 'Create a new mapping rule: Revit category → partida with formula + computation instructions. Instructions travel back to Revit as COS_NOTAS_MAPEO.',
+    params: '{ revit_categoria_id: string, partida_id: string, formula: string, parametro_principal?: string, descripcion?: string, instrucciones_computo?: string, prioridad?: number }',
   },
   update_revit_mapeo: {
-    description: 'Update an existing mapping rule (formula, partida, priority, etc.)',
-    params: '{ mapeo_id: string, formula?: string, partida_id?: string, parametro_principal?: string, descripcion?: string, prioridad?: number }',
+    description: 'Update an existing mapping rule (formula, partida, priority, instructions, etc.)',
+    params: '{ mapeo_id: string, formula?: string, partida_id?: string, parametro_principal?: string, descripcion?: string, instrucciones_computo?: string, prioridad?: number }',
   },
   delete_revit_mapeo: {
     description: 'Delete a mapping rule',
     params: '{ mapeo_id: string }',
   },
   apply_mapping_to_element: {
-    description: 'Manually assign a partida to a BIM element with optional formula evaluation. Used by AI agent to suggest/apply mappings.',
-    params: '{ elemento_id: string, partida_id: string, formula?: string, metrado?: number }',
+    description: 'Manually assign a partida to a BIM element with optional formula + mapping instructions. Used by AI agent to suggest/apply mappings.',
+    params: '{ elemento_id: string, partida_id: string, formula?: string, metrado?: number, notas_mapeo?: string }',
   },
   get_element_mappings: {
-    description: 'Get confirmed/mapped element results for Revit write-back. Returns revit_id → partida code + metrado.',
+    description: 'Get mapped element results for Revit write-back. Returns revit_id → partida code + formula + metrado + notas_mapeo (for COS_* shared params).',
     params: '{ importacion_id?: string, proyecto_id?: string }',
   },
   analyze_bim_import: {
@@ -1206,10 +1206,10 @@ async function handleMatchBimElements(params: Record<string, unknown>) {
     return { original_elements: 0, matched: 0, derived_created: 0, no_match: 0, message: 'No pending elements found' }
   }
 
-  // Load all mapeos grouped by category
+  // Load all mapeos grouped by category (include partida info + instrucciones for write-back)
   const { data: mapeos } = await admin
     .from('revit_mapeos')
-    .select('id, revit_categoria_id, partida_id, formula, parametro_principal, prioridad')
+    .select('id, revit_categoria_id, partida_id, formula, parametro_principal, prioridad, instrucciones_computo, descripcion, partidas(nombre, unidad, partida_localizaciones(codigo_local, estandares(codigo)))')
     .order('prioridad', { ascending: true })
 
   if (!mapeos?.length) {
@@ -1255,11 +1255,23 @@ async function handleMatchBimElements(params: Record<string, unknown>) {
       const result = evaluateFormula(mapeo.formula, paramData)
       if (result === null || result <= 0) continue
 
+      // Extract partida info for write-back
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const partidaData = mapeo.partidas as any
+      const partidaNombre = partidaData?.nombre || null
+      const locs = Array.isArray(partidaData?.partida_localizaciones) ? partidaData.partida_localizaciones : []
+      const codigoLocal = locs[0]?.codigo_local || null
+      const notasMapeo = mapeo.instrucciones_computo || mapeo.descripcion || null
+
       if (!firstDone) {
         // Update original element with first matching mapeo
         await admin.from('bim_elementos').update({
           partida_id: mapeo.partida_id,
           metrado_calculado: result,
+          formula_usada: mapeo.formula,
+          partida_codigo: codigoLocal,
+          partida_nombre: partidaNombre,
+          notas_mapeo: notasMapeo,
           estado: 'mapeado',
         }).eq('id', elem.id)
         firstDone = true
@@ -1275,6 +1287,10 @@ async function handleMatchBimElements(params: Record<string, unknown>) {
           parametros: elem.parametros,
           partida_id: mapeo.partida_id,
           metrado_calculado: result,
+          formula_usada: mapeo.formula,
+          partida_codigo: codigoLocal,
+          partida_nombre: partidaNombre,
+          notas_mapeo: notasMapeo,
           estado: 'mapeado',
         })
         derivedCreated++
@@ -1475,6 +1491,7 @@ async function handleCreateRevitMapeo(params: Record<string, unknown>) {
   const formula = params.formula as string
   const parametro_principal = (params.parametro_principal as string) || null
   const descripcion = (params.descripcion as string) || null
+  const instrucciones_computo = (params.instrucciones_computo as string) || null
   const prioridad = (params.prioridad as number) || 0
 
   if (!revit_categoria_id) throw new Error('revit_categoria_id is required')
@@ -1499,9 +1516,10 @@ async function handleCreateRevitMapeo(params: Record<string, unknown>) {
       formula,
       parametro_principal,
       descripcion,
+      instrucciones_computo,
       prioridad,
     })
-    .select('id, formula, parametro_principal, descripcion, prioridad')
+    .select('id, formula, parametro_principal, descripcion, instrucciones_computo, prioridad')
     .single()
 
   if (error) throw new Error(error.message)
@@ -1528,6 +1546,7 @@ async function handleUpdateRevitMapeo(params: Record<string, unknown>) {
   if (params.partida_id !== undefined) updates.partida_id = params.partida_id
   if (params.parametro_principal !== undefined) updates.parametro_principal = params.parametro_principal
   if (params.descripcion !== undefined) updates.descripcion = params.descripcion
+  if (params.instrucciones_computo !== undefined) updates.instrucciones_computo = params.instrucciones_computo
   if (params.prioridad !== undefined) updates.prioridad = params.prioridad
 
   if (Object.keys(updates).length === 0) throw new Error('No fields to update')
@@ -1536,7 +1555,7 @@ async function handleUpdateRevitMapeo(params: Record<string, unknown>) {
     .from('revit_mapeos')
     .update(updates)
     .eq('id', mapeo_id)
-    .select('id, formula, parametro_principal, descripcion, prioridad')
+    .select('id, formula, parametro_principal, descripcion, instrucciones_computo, prioridad')
     .single()
 
   if (error) throw new Error(error.message)
@@ -1563,6 +1582,7 @@ async function handleApplyMappingToElement(params: Record<string, unknown>) {
   const partida_id = params.partida_id as string
   const formula = params.formula as string | undefined
   const metrado = params.metrado as number | undefined
+  const notas_mapeo = params.notas_mapeo as string | undefined
 
   if (!elemento_id) throw new Error('elemento_id is required')
   if (!partida_id) throw new Error('partida_id is required')
@@ -1590,15 +1610,30 @@ async function handleApplyMappingToElement(params: Record<string, unknown>) {
 
   if (!calculatedMetrado) throw new Error('Either formula or metrado is required')
 
+  // Get partida info for write-back fields
+  const { data: partida } = await admin
+    .from('partidas')
+    .select('nombre, partida_localizaciones(codigo_local)')
+    .eq('id', partida_id)
+    .single()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const partidaInfo = partida as any
+  const locs = Array.isArray(partidaInfo?.partida_localizaciones) ? partidaInfo.partida_localizaciones : []
+
   const { data, error } = await admin
     .from('bim_elementos')
     .update({
       partida_id,
       metrado_calculado: Math.round(calculatedMetrado * 10000) / 10000,
+      formula_usada: formula || null,
+      partida_codigo: locs[0]?.codigo_local || null,
+      partida_nombre: partidaInfo?.nombre || null,
+      notas_mapeo: notas_mapeo || null,
       estado: 'mapeado',
     })
     .eq('id', elemento_id)
-    .select('id, partida_id, metrado_calculado, estado')
+    .select('id, partida_id, metrado_calculado, formula_usada, partida_nombre, notas_mapeo, estado')
     .single()
 
   if (error) throw new Error(error.message)
@@ -1618,6 +1653,7 @@ async function handleGetElementMappings(params: Record<string, unknown>) {
     .from('bim_elementos')
     .select(`
       id, revit_id, familia, tipo, metrado_calculado, estado,
+      formula_usada, partida_codigo, partida_nombre, notas_mapeo,
       parametros,
       revit_categorias(nombre, nombre_es),
       partidas(id, nombre, unidad, capitulo,
@@ -1659,10 +1695,13 @@ async function handleGetElementMappings(params: Record<string, unknown>) {
       categoria: cat?.nombre || null,
       familia: el.familia,
       tipo: el.tipo,
-      partida_nombre: partida?.nombre || null,
-      partida_codigo: loc?.codigo_local || null,
+      // Write-back fields for Revit COS_* shared parameters
+      partida_nombre: el.partida_nombre || partida?.nombre || null,
+      partida_codigo: el.partida_codigo || loc?.codigo_local || null,
       partida_unidad: partida?.unidad || null,
+      formula: el.formula_usada || null,
       metrado: el.metrado_calculado,
+      notas_mapeo: el.notas_mapeo || null,
       estado: el.estado,
     }
   })

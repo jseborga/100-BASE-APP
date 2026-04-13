@@ -1,6 +1,6 @@
 // App.cs
 // Punto de entrada del Add-in ConstructionOS para Autodesk Revit 2025.
-// Crea la pestaña "ConstructionOS" con 5 botones.
+// Crea la pestaña "ConstructionOS" con 6 botones.
 // Autor: SSA Ingenieria SRL
 
 using Autodesk.Revit.UI;
@@ -87,7 +87,24 @@ namespace RvtConstructionOS
                     ?? throw new InvalidOperationException("No se pudo crear el botón Match BIM.");
                 SetButtonIcon(matchBtn, "bridgematch_icon");
 
-                // Boton 5: Probar Conexion
+                // Boton 5: Sync Mapeo (write-back)
+                PushButtonData syncBtnData = new PushButtonData(
+                    name: "btnCOSSync",
+                    text: "Sync\nMapeo",
+                    assemblyName: assemblyPath,
+                    className: "RvtConstructionOS.Commands.SyncMappingCommand"
+                )
+                {
+                    ToolTip = "Sincronizar mapeos de ConstructionOS al modelo Revit.",
+                    LongDescription = "Descarga los mapeos confirmados (partida, fórmula, metrado, notas) " +
+                                      "y los escribe como parámetros COS_* en los tipos del modelo. " +
+                                      "Permite ida y vuelta: exportar → mapear en web → sync al modelo.",
+                };
+                PushButton syncBtn = panel.AddItem(syncBtnData) as PushButton
+                    ?? throw new InvalidOperationException("No se pudo crear el botón Sync Mapeo.");
+                SetButtonIcon(syncBtn, "sync_icon");
+
+                // Boton 6: Probar Conexion
                 PushButtonData testBtnData = new PushButtonData(
                     name: "btnCOSTest",
                     text: "Probar\nConexión",

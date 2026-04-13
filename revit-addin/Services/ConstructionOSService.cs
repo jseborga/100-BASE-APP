@@ -132,6 +132,18 @@ namespace RvtConstructionOS.Services
         }
 
         // ============================================================
+        // Write-back — Get mappings for Revit sync
+        // ============================================================
+
+        public async Task<ElementMappingsResponse> GetElementMappingsAsync(string proyectoId)
+        {
+            return await CallActionAsync<ElementMappingsResponse>("get_element_mappings", new
+            {
+                proyecto_id = proyectoId,
+            });
+        }
+
+        // ============================================================
         // Smoke test
         // ============================================================
 

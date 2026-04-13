@@ -116,6 +116,29 @@ namespace RvtConstructionOS.Commands
                         metadata["CapasEstructurales"] = capasInfo;
                     }
 
+                    // COS_* write-back data (from previous sync, if any)
+                    // Read from Revit ElementType so server knows prior mapping state
+                    try
+                    {
+                        var typeId = new ElementId((long)elem.RevitTypeId);
+                        var revitType = doc.GetElement(typeId);
+                        if (revitType != null)
+                        {
+                            string? cosCodigo = LeerCosParam(revitType, new Guid("a1b2c3d4-0004-0004-0004-000000000001"));
+                            string? cosNombre = LeerCosParam(revitType, new Guid("a1b2c3d4-0004-0004-0004-000000000002"));
+                            string? cosFormula = LeerCosParam(revitType, new Guid("a1b2c3d4-0004-0004-0004-000000000003"));
+                            string? cosNotas = LeerCosParam(revitType, new Guid("a1b2c3d4-0004-0004-0004-000000000005"));
+                            string? cosEstado = LeerCosParam(revitType, new Guid("a1b2c3d4-0004-0004-0004-000000000006"));
+
+                            if (!string.IsNullOrEmpty(cosCodigo)) metadata["COS_PartidaCodigo"] = cosCodigo;
+                            if (!string.IsNullOrEmpty(cosNombre)) metadata["COS_PartidaNombre"] = cosNombre;
+                            if (!string.IsNullOrEmpty(cosFormula)) metadata["COS_Formula"] = cosFormula;
+                            if (!string.IsNullOrEmpty(cosNotas)) metadata["COS_NotasMapeo"] = cosNotas;
+                            if (!string.IsNullOrEmpty(cosEstado)) metadata["COS_Estado"] = cosEstado;
+                        }
+                    }
+                    catch { /* COS params not bound yet — normal on first export */ }
+
                     var payload = new BimElementPayload
                     {
                         RevitId = elem.RevitTypeId.ToString(),
@@ -159,6 +182,14 @@ namespace RvtConstructionOS.Commands
                     $"Error: {ex.Message}\n\n{ex.InnerException?.Message}");
                 return Result.Failed;
             }
+        }
+
+        private static string? LeerCosParam(Element elem, Guid paramGuid)
+        {
+            var param = elem.get_Parameter(paramGuid);
+            if (param == null || !param.HasValue) return null;
+            string val = param.AsString() ?? param.AsValueString() ?? "";
+            return string.IsNullOrWhiteSpace(val) ? null : val;
         }
     }
 }
