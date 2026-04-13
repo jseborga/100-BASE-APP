@@ -1,0 +1,55 @@
+<Window x:Class="RvtConstructionOS.Views.MatchResultsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ConstructionOS — Resultados de Match BIM"
+        Width="900" Height="600"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize">
+
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <TextBlock Grid.Row="0" FontSize="14" FontWeight="Bold" Margin="0,0,0,10"
+                   Text="Elementos BIM mapeados a partidas"/>
+
+        <!-- DataGrid -->
+        <DataGrid Grid.Row="1" x:Name="dgResults"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  CanUserSortColumns="True"
+                  AlternatingRowBackground="#F8F8F8"
+                  GridLinesVisibility="Horizontal"
+                  HeadersVisibility="Column"
+                  SelectionMode="Extended"
+                  VerticalScrollBarVisibility="Auto">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Categoría" Binding="{Binding CategoriaName}" Width="120"/>
+                <DataGridTextColumn Header="Familia" Binding="{Binding Familia}" Width="150"/>
+                <DataGridTextColumn Header="Tipo" Binding="{Binding Tipo}" Width="120"/>
+                <DataGridTextColumn Header="Partida" Binding="{Binding PartidaName}" Width="200"/>
+                <DataGridTextColumn Header="Unidad" Binding="{Binding PartidaUnidad}" Width="60"/>
+                <DataGridTextColumn Header="Metrado" Binding="{Binding MetradoCalculado, StringFormat=N4}" Width="90"/>
+                <DataGridTextColumn Header="Estado" Binding="{Binding Estado}" Width="80"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Summary -->
+        <TextBlock Grid.Row="2" x:Name="txtResumen" Margin="0,8,0,8"
+                   FontStyle="Italic" Foreground="Gray"/>
+
+        <!-- Buttons -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="btnConfirmar" Content="Confirmar y crear partidas"
+                    Width="200" Height="32" Margin="0,0,10,0"
+                    Click="BtnConfirmar_Click"/>
+            <Button Content="Cerrar" Width="80" Height="32"
+                    Click="BtnCerrar_Click" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

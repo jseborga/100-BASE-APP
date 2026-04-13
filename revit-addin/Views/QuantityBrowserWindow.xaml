@@ -1,0 +1,573 @@
+<Window x:Class="RvtConstructionOS.Views.QuantityBrowserWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:RvtConstructionOS.ViewModels"
+        Title="SSA BIM — Cómputos BOQ"
+        Width="980" Height="660"
+        MinWidth="700" MinHeight="480"
+        WindowStartupLocation="CenterScreen"
+        Background="#F5F5F5"
+        Loaded="Window_Loaded">
+
+    <Window.Resources>
+
+        <!-- Encabezado de sección en el panel de detalle -->
+        <Style x:Key="EstiloSeccion" TargetType="Border">
+            <Setter Property="Background"       Value="#1F4E79"/>
+            <Setter Property="Padding"          Value="8,4"/>
+            <Setter Property="Margin"           Value="0,10,0,6"/>
+        </Style>
+        <Style x:Key="EstiloSeccionTxt" TargetType="TextBlock">
+            <Setter Property="Foreground"   Value="White"/>
+            <Setter Property="FontWeight"   Value="Bold"/>
+            <Setter Property="FontSize"     Value="11"/>
+        </Style>
+
+        <!-- Etiqueta de campo -->
+        <Style x:Key="EstiloLabel" TargetType="TextBlock">
+            <Setter Property="Foreground"   Value="#546E7A"/>
+            <Setter Property="FontSize"     Value="11"/>
+            <Setter Property="Margin"       Value="0,0,0,2"/>
+        </Style>
+
+        <!-- Fila de cantidad en el desglose -->
+        <Style x:Key="EstiloCantLabel" TargetType="TextBlock">
+            <Setter Property="FontSize"     Value="11"/>
+            <Setter Property="Foreground"   Value="#555"/>
+            <Setter Property="Margin"       Value="4,1"/>
+        </Style>
+        <Style x:Key="EstiloCantValor" TargetType="TextBlock">
+            <Setter Property="FontSize"     Value="11"/>
+            <Setter Property="Foreground"   Value="#1565C0"/>
+            <Setter Property="FontFamily"   Value="Consolas"/>
+            <Setter Property="Margin"       Value="4,1"/>
+            <Setter Property="TextAlignment" Value="Right"/>
+        </Style>
+        <Style x:Key="EstiloCantPrincipal" TargetType="TextBlock">
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="FontWeight"   Value="Bold"/>
+            <Setter Property="Foreground"   Value="#0D47A1"/>
+            <Setter Property="FontFamily"   Value="Consolas"/>
+            <Setter Property="Margin"       Value="4,1"/>
+            <Setter Property="TextAlignment" Value="Right"/>
+        </Style>
+
+        <!-- Campo editable -->
+        <Style x:Key="EstiloCampo" TargetType="TextBox">
+            <Setter Property="FontSize"         Value="12"/>
+            <Setter Property="Padding"          Value="5,3"/>
+            <Setter Property="BorderBrush"      Value="#B0BEC5"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Margin"           Value="0,0,0,6"/>
+        </Style>
+        <Style x:Key="EstiloCombo" TargetType="ComboBox">
+            <Setter Property="FontSize"         Value="12"/>
+            <Setter Property="Padding"          Value="4,2"/>
+            <Setter Property="BorderBrush"      Value="#B0BEC5"/>
+            <Setter Property="Margin"           Value="0,0,0,6"/>
+        </Style>
+
+        <!-- Encabezado de columna DataGrid -->
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background"   Value="#37474F"/>
+            <Setter Property="Foreground"   Value="White"/>
+            <Setter Property="FontSize"     Value="10"/>
+            <Setter Property="FontWeight"   Value="Bold"/>
+            <Setter Property="Padding"      Value="4,3"/>
+        </Style>
+
+        <!-- Árbol: estilo de TreeViewItem -->
+        <Style TargetType="TreeViewItem">
+            <Setter Property="IsExpanded"   Value="True"/>
+            <Setter Property="Padding"      Value="2,1"/>
+            <Setter Property="FontSize"     Value="12"/>
+        </Style>
+
+        <!-- Templates del árbol -->
+        <HierarchicalDataTemplate DataType="{x:Type vm:NodoCategoriaVm}"
+                                   ItemsSource="{Binding Familias}">
+            <Border Background="Transparent" Padding="2,1">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="▶ " Foreground="#1565C0" FontSize="10" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding Resumen}"
+                               FontWeight="Bold" Foreground="#1F4E79" FontSize="12"/>
+                </StackPanel>
+            </Border>
+        </HierarchicalDataTemplate>
+
+        <HierarchicalDataTemplate DataType="{x:Type vm:NodoFamiliaVm}"
+                                   ItemsSource="{Binding Tipos}">
+            <TextBlock Text="{Binding Nombre}"
+                       Foreground="#455A64" FontSize="11" FontStyle="Italic"
+                       Padding="4,1"/>
+        </HierarchicalDataTemplate>
+
+        <DataTemplate DataType="{x:Type vm:NodoTipoVm}">
+            <Grid Margin="2,1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding TipoRevit}"
+                           FontSize="12" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding ResumenArbol}"
+                           Foreground="#1565C0" FontSize="11" FontFamily="Consolas"
+                           Margin="8,0,4,0" VerticalAlignment="Center"/>
+            </Grid>
+        </DataTemplate>
+
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>  <!-- Toolbar superior -->
+            <RowDefinition Height="*"/>     <!-- Árbol + Detalle -->
+            <RowDefinition Height="Auto"/>  <!-- Status + Botones -->
+        </Grid.RowDefinitions>
+
+        <!-- ===== TOOLBAR SUPERIOR ===== -->
+        <Border Grid.Row="0" Background="#1F4E79" Padding="10,7">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Cómputos BOQ — " Foreground="White"
+                               FontSize="13" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="txtNombreModelo" Foreground="#90CAF9"
+                               FontSize="12" VerticalAlignment="Center"/>
+                </StackPanel>
+                <Button Grid.Column="1" x:Name="btnRefresh"
+                        Content="⟳  Actualizar Modelo"
+                        Padding="10,4" FontSize="12"
+                        Background="#0D47A1" Foreground="White" BorderThickness="0"
+                        Cursor="Hand" Click="BtnRefresh_Click"
+                        ToolTip="Re-escanear el modelo Revit para actualizar cantidades"/>
+            </Grid>
+        </Border>
+
+        <!-- ===== PANEL PRINCIPAL: ÁRBOL + DETALLE ===== -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="260" MinWidth="160" MaxWidth="400"/>
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ─── PANEL IZQUIERDO: ÁRBOL ─── -->
+            <Border Grid.Column="0" BorderBrush="#CFD8DC" BorderThickness="0,0,1,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Buscador -->
+                    <Border Grid.Row="0" Background="#ECEFF1" Padding="6,5"
+                            BorderBrush="#CFD8DC" BorderThickness="0,0,0,1">
+                        <TextBox x:Name="txtFiltroArbol"
+                                 FontSize="11" Padding="4,3"
+                                 TextChanged="TxtFiltroArbol_TextChanged"
+                                 ToolTip="Filtrar por familia o tipo"/>
+                    </Border>
+
+                    <!-- Contador de elementos -->
+                    <TextBlock Grid.Row="1" x:Name="txtContadorArbol"
+                               Padding="8,4" FontSize="10" Foreground="#78909C"
+                               Background="#F9F9F9"/>
+
+                    <!-- TreeView -->
+                    <TreeView Grid.Row="2" x:Name="treeElementos"
+                              BorderThickness="0"
+                              Background="White"
+                              SelectedItemChanged="TreeElementos_SelectedItemChanged"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
+                </Grid>
+            </Border>
+
+            <!-- ─── SEPARADOR REDIMENSIONABLE ─── -->
+            <GridSplitter Grid.Column="1"
+                          HorizontalAlignment="Stretch"
+                          Background="#CFD8DC"
+                          ShowsPreview="True"/>
+
+            <!-- ─── PANEL DERECHO: DETALLE DEL TIPO SELECCIONADO ─── -->
+            <Grid Grid.Column="2">
+
+                <!-- Mensaje cuando nada está seleccionado -->
+                <Border x:Name="panelVacio" Background="#FAFAFA" Visibility="Visible">
+                    <TextBlock Text="Seleccioná un tipo de elemento en el árbol para ver sus cómputos."
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="#90A4AE" FontSize="13" TextWrapping="Wrap"
+                               Margin="40"/>
+                </Border>
+
+                <!-- Panel de detalle (visible cuando un NodoTipoVm está seleccionado) -->
+                <ScrollViewer x:Name="scrollDetalle" Visibility="Collapsed"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="panelDetalle" Margin="14,10,14,14">
+
+                        <!-- == Encabezado del tipo == -->
+                        <DockPanel Margin="0,0,0,0">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <!-- Botones de selección/resaltado en Revit -->
+                                <Button x:Name="btnSeleccionar"
+                                        Content="🎯 Seleccionar"
+                                        Padding="7,3" FontSize="11" Margin="0,0,4,0"
+                                        Background="#2E7D32" Foreground="White"
+                                        BorderThickness="0" Cursor="Hand"
+                                        VerticalAlignment="Center"
+                                        Click="BtnSeleccionar_Click"
+                                        ToolTip="Seleccionar este tipo en Revit y hacer zoom"/>
+                                <Button x:Name="btnAislar"
+                                        Content="👁 Aislar"
+                                        Padding="7,3" FontSize="11" Margin="0,0,4,0"
+                                        Background="#E65100" Foreground="White"
+                                        BorderThickness="0" Cursor="Hand"
+                                        VerticalAlignment="Center"
+                                        Click="BtnAislar_Click"
+                                        ToolTip="Aislar temporalmente este tipo en la vista activa"/>
+                                <Button x:Name="btnQuitarAislamiento"
+                                        Content="↩ Restablecer"
+                                        Padding="7,3" FontSize="11" Margin="0,0,8,0"
+                                        Background="#546E7A" Foreground="White"
+                                        BorderThickness="0" Cursor="Hand"
+                                        VerticalAlignment="Center"
+                                        Click="BtnQuitarAislamiento_Click"
+                                        ToolTip="Quitar aislamiento temporal de la vista activa"/>
+                                <!-- Detalle -->
+                                <Button x:Name="btnVerDetalle"
+                                        Content="📋 Detalle"
+                                        Padding="7,3" FontSize="11"
+                                        Background="#42A5F5" Foreground="White"
+                                        BorderThickness="0" Cursor="Hand"
+                                        VerticalAlignment="Center"
+                                        Click="BtnVerDetalle_Click"
+                                        ToolTip="Abrir ventana de detalle de cómputos y partidas"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock x:Name="txtTipoNombre"
+                                           FontSize="15" FontWeight="Bold" Foreground="#212121"/>
+                                <TextBlock x:Name="txtTipoMeta"
+                                           FontSize="11" Foreground="#78909C" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <!-- == CANTIDADES == -->
+                        <Border Style="{StaticResource EstiloSeccion}">
+                            <TextBlock Text="CANTIDADES DEL MODELO" Style="{StaticResource EstiloSeccionTxt}"/>
+                        </Border>
+
+                        <Grid x:Name="gridCantidades" Margin="4,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="90"/>
+                                <ColumnDefinition Width="40"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                                <RowDefinition Height="4"/>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Filas de área -->
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Área bruta interior:"
+                                       Style="{StaticResource EstiloCantLabel}"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1" x:Name="txtAreaBrutaInt"
+                                       Style="{StaticResource EstiloCantValor}"/>
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="m²"
+                                       Style="{StaticResource EstiloCantLabel}"/>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Huecos descontados:"
+                                       Style="{StaticResource EstiloCantLabel}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="txtAreaHuecos"
+                                       Style="{StaticResource EstiloCantValor}" Foreground="#C62828"/>
+                            <TextBlock Grid.Row="1" Grid.Column="2" Text="m²"
+                                       Style="{StaticResource EstiloCantLabel}"/>
+
+                            <Separator Grid.Row="3" Grid.ColumnSpan="3" Margin="4,0"/>
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Área NETA interior:"
+                                       Style="{StaticResource EstiloCantLabel}" FontWeight="SemiBold"/>
+                            <TextBlock Grid.Row="4" Grid.Column="1" x:Name="txtAreaNetaInt"
+                                       Style="{StaticResource EstiloCantPrincipal}"/>
+                            <TextBlock Grid.Row="4" Grid.Column="2" Text="m²"
+                                       Style="{StaticResource EstiloCantLabel}" FontWeight="SemiBold"/>
+
+                            <TextBlock Grid.Row="5" Grid.Column="0" x:Name="lblVolumen"
+                                       Text="Volumen:" Style="{StaticResource EstiloCantLabel}"/>
+                            <TextBlock Grid.Row="5" Grid.Column="1" x:Name="txtVolumen"
+                                       Style="{StaticResource EstiloCantValor}"/>
+                            <TextBlock Grid.Row="5" Grid.Column="2" Text="m³"
+                                       Style="{StaticResource EstiloCantLabel}"/>
+
+                            <TextBlock Grid.Row="6" Grid.Column="0" x:Name="lblLongitud"
+                                       Text="Longitud:" Style="{StaticResource EstiloCantLabel}"/>
+                            <TextBlock Grid.Row="6" Grid.Column="1" x:Name="txtLongitud"
+                                       Style="{StaticResource EstiloCantValor}"/>
+                            <TextBlock Grid.Row="6" Grid.Column="2" Text="ml"
+                                       Style="{StaticResource EstiloCantLabel}"/>
+                        </Grid>
+
+                        <!-- == CONFIGURACIÓN BOQ == -->
+                        <Border Style="{StaticResource EstiloSeccion}">
+                            <TextBlock Text="CONFIGURACIÓN BOQ" Style="{StaticResource EstiloSeccionTxt}"/>
+                        </Border>
+
+                        <CheckBox x:Name="chkIncluir" Content="Incluir en exportación"
+                                  FontSize="12" Margin="0,0,0,8"
+                                  Checked="CampoBOQ_Changed" Unchecked="CampoBOQ_Changed"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Código -->
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Código Partida"
+                                       Style="{StaticResource EstiloLabel}"/>
+                            <TextBox Grid.Row="1" Grid.Column="0" x:Name="txtCodigo"
+                                     Style="{StaticResource EstiloCampo}"
+                                     LostFocus="CampoBOQ_Changed"
+                                     FontFamily="Consolas" Foreground="#1565C0"/>
+
+                            <!-- Rubro -->
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Rubro"
+                                       Style="{StaticResource EstiloLabel}"/>
+                            <TextBox Grid.Row="1" Grid.Column="2" x:Name="txtRubro"
+                                     Style="{StaticResource EstiloCampo}"
+                                     LostFocus="CampoBOQ_Changed"/>
+
+                            <!-- Nombre ítem -->
+                            <TextBlock Grid.Row="2" Grid.ColumnSpan="3" Text="Nombre Ítem"
+                                       Style="{StaticResource EstiloLabel}"/>
+                            <TextBox Grid.Row="3" Grid.ColumnSpan="3" x:Name="txtNombreItem"
+                                     Style="{StaticResource EstiloCampo}"
+                                     LostFocus="CampoBOQ_Changed"/>
+                        </Grid>
+
+                        <!-- Unidad + Criterio + Factor -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="80"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Unidad"
+                                       Style="{StaticResource EstiloLabel}"/>
+                            <ComboBox Grid.Row="1" Grid.Column="0" x:Name="cmbUnidad"
+                                      Style="{StaticResource EstiloCombo}"
+                                      IsEditable="True"
+                                      SelectionChanged="CampoBOQ_Changed">
+                                <ComboBoxItem>m2</ComboBoxItem>
+                                <ComboBoxItem>m3</ComboBoxItem>
+                                <ComboBoxItem>ml</ComboBoxItem>
+                                <ComboBoxItem>und</ComboBoxItem>
+                                <ComboBoxItem>kg</ComboBoxItem>
+                                <ComboBoxItem>tn</ComboBoxItem>
+                                <ComboBoxItem>glb</ComboBoxItem>
+                                <ComboBoxItem>hr</ComboBoxItem>
+                            </ComboBox>
+
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Criterio Medición"
+                                       Style="{StaticResource EstiloLabel}"/>
+                            <ComboBox Grid.Row="1" Grid.Column="2" x:Name="cmbCriterio"
+                                      Style="{StaticResource EstiloCombo}"
+                                      SelectionChanged="CampoBOQ_Changed">
+                                <ComboBoxItem>AREA_NETA</ComboBoxItem>
+                                <ComboBoxItem>AREA_BRUTA</ComboBoxItem>
+                                <ComboBoxItem>VOLUMEN</ComboBoxItem>
+                                <ComboBoxItem>LONGITUD</ComboBoxItem>
+                                <ComboBoxItem>CANTIDAD</ComboBoxItem>
+                            </ComboBox>
+
+                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Factor"
+                                       Style="{StaticResource EstiloLabel}"/>
+                            <TextBox Grid.Row="1" Grid.Column="4" x:Name="txtFactor"
+                                     Style="{StaticResource EstiloCampo}"
+                                     LostFocus="CampoBOQ_Changed"
+                                     TextAlignment="Right"/>
+                        </Grid>
+
+                        <!-- Observación -->
+                        <TextBlock Text="Observación" Style="{StaticResource EstiloLabel}"/>
+                        <TextBox x:Name="txtObservacion" Style="{StaticResource EstiloCampo}"
+                                 LostFocus="CampoBOQ_Changed"/>
+
+                        <!-- == DERIVADOS == -->
+                        <Border x:Name="borderDerivados" Style="{StaticResource EstiloSeccion}"
+                                Visibility="Collapsed">
+                            <TextBlock Text="PARTIDAS DERIVADAS" Style="{StaticResource EstiloSeccionTxt}"/>
+                        </Border>
+
+                        <DataGrid x:Name="gridDerivados"
+                                  Visibility="Collapsed"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  CanUserSortColumns="True"
+                                  GridLinesVisibility="Horizontal"
+                                  HorizontalGridLinesBrush="#E0E0E0"
+                                  RowBackground="White"
+                                  AlternatingRowBackground="#F9F9F9"
+                                  BorderThickness="1"
+                                  BorderBrush="#CFD8DC"
+                                  FontSize="11"
+                                  RowHeight="24"
+                                  MaxHeight="220">
+                            <DataGrid.Columns>
+
+                                <!-- Incluir -->
+                                <DataGridTemplateColumn Header="✓" Width="30" CanUserResize="False">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding Incluir, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+
+                                <!-- Tipo -->
+                                <DataGridTextColumn Header="Tipo Derivado" Width="130"
+                                                    Binding="{Binding TipoDisplay}" IsReadOnly="True">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Padding" Value="3,0"/>
+                                            <Setter Property="VerticalAlignment" Value="Center"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+
+                                <!-- Cara -->
+                                <DataGridTextColumn Header="Cara" Width="60"
+                                                    Binding="{Binding Cara}" IsReadOnly="True">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Padding" Value="3,0"/>
+                                            <Setter Property="VerticalAlignment" Value="Center"/>
+                                            <Setter Property="Foreground" Value="#546E7A"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+
+                                <!-- Cantidad -->
+                                <DataGridTextColumn Header="Cantidad" Width="80"
+                                                    Binding="{Binding ResumenCant}" IsReadOnly="True">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Padding" Value="3,0"/>
+                                            <Setter Property="VerticalAlignment" Value="Center"/>
+                                            <Setter Property="FontFamily" Value="Consolas"/>
+                                            <Setter Property="Foreground" Value="#1565C0"/>
+                                            <Setter Property="TextAlignment" Value="Right"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+
+                                <!-- Código (editable) -->
+                                <DataGridTextColumn Header="Código" Width="90"
+                                                    Binding="{Binding CodigoPartida, UpdateSourceTrigger=LostFocus}">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Padding" Value="3,0"/>
+                                            <Setter Property="VerticalAlignment" Value="Center"/>
+                                            <Setter Property="FontFamily" Value="Consolas"/>
+                                            <Setter Property="Foreground" Value="#1565C0"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+
+                                <!-- Nombre (editable) -->
+                                <DataGridTextColumn Header="Nombre Ítem" Width="*"
+                                                    Binding="{Binding NombreItem, UpdateSourceTrigger=LostFocus}">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Padding" Value="3,0"/>
+                                            <Setter Property="VerticalAlignment" Value="Center"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+
+        <!-- ===== BARRA INFERIOR: STATUS + BOTONES ===== -->
+        <Border Grid.Row="2" Background="#ECEFF1" Padding="10,7"
+                BorderBrush="#CFD8DC" BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="txtStatus" Grid.Column="0"
+                           FontSize="11" Foreground="#546E7A" VerticalAlignment="Center"/>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <!-- Catálogo + Plantillas -->
+                    <Button x:Name="btnImportarCatalogo" Content="📥 Catálogo"
+                            Padding="8,5" FontSize="11" Margin="0,0,4,0"
+                            Background="#6D4C41" Foreground="White" BorderThickness="0"
+                            Cursor="Hand" Click="BtnImportarCatalogo_Click"
+                            ToolTip="Importar catálogo de partidas desde Excel/CSV"/>
+                    <Button x:Name="btnExportarCatalogo" Content="📤 Plantilla"
+                            Padding="8,5" FontSize="11" Margin="0,0,4,0"
+                            Background="#6D4C41" Foreground="White" BorderThickness="0"
+                            Cursor="Hand" Click="BtnExportarCatalogo_Click"
+                            ToolTip="Exportar plantilla de partidas a Excel"/>
+                    <Button x:Name="btnAplicarPlantilla" Content="🗂 Aplicar Plantilla"
+                            Padding="8,5" FontSize="11" Margin="0,0,8,0"
+                            Background="#5D4037" Foreground="White" BorderThickness="0"
+                            Cursor="Hand" Click="BtnAplicarPlantilla_Click"
+                            ToolTip="Aplicar una plantilla guardada al proyecto actual"/>
+
+                    <Separator Width="1" Background="#B0BEC5" Margin="0,0,8,0"/>
+
+                    <!-- Guardar + Exportar -->
+                    <Button x:Name="btnGuardar" Content="💾 Guardar"
+                            Padding="10,5" FontSize="12" Margin="0,0,6,0"
+                            Background="#37474F" Foreground="White" BorderThickness="0"
+                            Cursor="Hand" Click="BtnGuardar_Click"
+                            ToolTip="Guardar configuración de códigos y nombres"/>
+                    <Button x:Name="btnExportarExcel" Content="📊 Excel"
+                            Padding="10,5" FontSize="12" Margin="0,0,6,0"
+                            Background="#1F4E79" Foreground="White" BorderThickness="0"
+                            Cursor="Hand" Click="BtnExportarExcel_Click"
+                            ToolTip="Exportar cómputos a Excel (8 hojas)"/>
+                    <Button x:Name="btnExportarCsv" Content="📄 CSV"
+                            Padding="8,5" FontSize="12" Margin="0,0,6,0"
+                            Background="#455A64" Foreground="White" BorderThickness="0"
+                            Cursor="Hand" Click="BtnExportarCsv_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

@@ -1,0 +1,74 @@
+<Window x:Class="RvtConstructionOS.Views.ConfigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ConstructionOS — Configuración"
+        Width="520" Height="420"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Titulo -->
+        <TextBlock Grid.Row="0" FontSize="16" FontWeight="Bold" Margin="0,0,0,15"
+                   Text="Conexión con ConstructionOS"/>
+
+        <!-- URL -->
+        <StackPanel Grid.Row="1" Margin="0,0,0,10">
+            <TextBlock Text="URL del servidor:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <TextBox x:Name="txtUrl" Height="28"
+                     ToolTip="Ejemplo: https://base-app.q8waob.easypanel.host"/>
+        </StackPanel>
+
+        <!-- API Key -->
+        <StackPanel Grid.Row="2" Margin="0,0,0,10">
+            <TextBlock Text="API Key:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <PasswordBox x:Name="txtApiKey" Height="28"
+                         ToolTip="Clave de autenticación Bearer para el webhook"/>
+        </StackPanel>
+
+        <!-- Proyecto activo -->
+        <StackPanel Grid.Row="3" Margin="0,0,0,10">
+            <TextBlock Text="Proyecto activo:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <ComboBox x:Name="cmbProyectos" Grid.Column="0" Height="28"
+                          DisplayMemberPath="Nombre" SelectedValuePath="Id"
+                          IsEnabled="False"/>
+                <Button x:Name="btnCargarProyectos" Grid.Column="1"
+                        Content="Cargar" Width="80" Height="28" Margin="8,0,0,0"
+                        Click="BtnCargarProyectos_Click"/>
+            </Grid>
+        </StackPanel>
+
+        <!-- Estado -->
+        <TextBlock Grid.Row="4" x:Name="txtEstado" Foreground="Gray"
+                   FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+        <!-- Spacer -->
+        <Border Grid.Row="5"/>
+
+        <!-- Botones -->
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="btnProbar" Content="Probar Conexión"
+                    Width="120" Height="32" Margin="0,0,10,0"
+                    Click="BtnProbar_Click"/>
+            <Button x:Name="btnGuardar" Content="Guardar"
+                    Width="100" Height="32" Margin="0,0,10,0"
+                    Click="BtnGuardar_Click" IsDefault="True"/>
+            <Button Content="Cancelar" Width="80" Height="32"
+                    Click="BtnCancelar_Click" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

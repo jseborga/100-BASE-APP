@@ -88,7 +88,7 @@ Proyecto "base-app"          ← este repo
 - `12_partida_tags_pe.sql` — tags PE para las 111 partidas compartidas
 
 ### Estado de seeds por país:
-- ✅ Bolivia — completo (16 capítulos, 111 partidas, 707 tags)
+- ✅ Bolivia — completo (16 capítulos, 126 partidas base + 15 especializadas via MCP, 707 tags)
 - ✅ Perú — completo (17 divisiones, 111 localizaciones RNE, tags PE)
 - ⏳ Brasil, Argentina, Chile, EEUU — pendiente
 
@@ -172,6 +172,13 @@ Fórmulas ejemplo:
 - Permite queries directas a la BD desde Claude Code
 - Útil para verificar seeds, correr migraciones, inspeccionar datos
 
+### ConstructionOS MCP Server (Claude Code / Claude Desktop)
+- Servidor MCP propio en `constructionos-mcp-server/`
+- Conecta via webhook a `/api/webhooks/mcp` (auth: Bearer WEBHOOK_API_KEY)
+- 18 tools: list_projects, get_project, search_catalog, add_partidas_to_project, bulk_create_partidas, etc.
+- Permite crear partidas, asignarlas a proyectos, actualizar metrados y agregar localizaciones desde Claude
+- Config en `.mcp.json` (CONSTRUCTIONOS_API_KEY debe coincidir con WEBHOOK_API_KEY en EasyPanel)
+
 ---
 
 ## 📁 Estructura del repo (actual en GitHub)
@@ -206,6 +213,7 @@ Fórmulas ejemplo:
 │   │       ├── agentes/[agente] ← POST: streaming SSE
 │   │       ├── proyectos/       ← CRUD + [id]/partidas (import, patch, delete)
 │   │       ├── config/          ← agentes, llm (keys, models, provider-models)
+│   │       ├── webhooks/mcp/    ← POST: entry point MCP server (18 actions)
 │   │       └── health/          ← GET: healthcheck
 │   ├── components/
 │   │   ├── layout/              ← sidebar.tsx, topbar.tsx
@@ -256,11 +264,20 @@ Fórmulas ejemplo:
 [x] 19. Dashboard con estadísticas reales — proyectos, catálogo, asignaciones, BIM
 ```
 
+### Completado (fase 4 — MCP + catálogo expandido)
+```
+[x] 20. MCP Server ConstructionOS — 18 tools, webhook auth, stdio transport
+[x] 21. Partidas especializadas hormigón visto — columnas, vigas, losas, encofrado metálico, resane, curado, sellador
+[x] 22. Partidas terreno en pendiente — gaviones, estabilización suelo arcilloso
+[x] 23. Partidas acabados especiales — piso madera entablonada, tragaluz/claraboya, ventana aluminio termopanel
+[x] 24. Catálogo expandido de 111 → 126 partidas con localizaciones NB (Bolivia)
+```
+
 ### Pendiente (orden)
 ```
-[ ] 20. Conectar n8n para exportación a Odoo
-[ ] 21. Implementar modo importación Excel
-[ ] 22. Agregar partidas Brasil (ABNT localizaciones)
+[ ] 25. Conectar n8n para exportación a Odoo
+[ ] 26. Implementar modo importación Excel
+[ ] 27. Agregar partidas Brasil (ABNT localizaciones)
 ```
 
 ---
@@ -275,6 +292,9 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 # Anthropic
 ANTHROPIC_API_KEY=
+
+# Webhook MCP
+WEBHOOK_API_KEY=              # ← auth para /api/webhooks/mcp (misma key en .mcp.json)
 
 # Odoo (para n8n)
 ODOO_URL=

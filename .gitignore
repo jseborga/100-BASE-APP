@@ -43,3 +43,11 @@ next-env.d.ts
 *.swp
 *.swo
 *~
+
+# C# / Revit Add-in build artifacts
+revit-addin/bin/
+revit-addin/obj/
+
+# MCP server local
+constructionos-mcp-server/node_modules/
+easypanel-mcp-server/

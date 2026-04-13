@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>RvtConstructionOS</AssemblyName>
+    <RootNamespace>RvtConstructionOS</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2025\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2025\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Carpeta destino del Add-in en Revit 2025 -->
+  <PropertyGroup>
+    <RevitAddinsDir>$(AppData)\Autodesk\Revit\Addins\2025\</RevitAddinsDir>
+  </PropertyGroup>
+
+  <Target Name="PostBuild" AfterTargets="Build">
+    <Copy SourceFiles="$(ProjectDir)$(AssemblyName).addin"
+          DestinationFolder="$(RevitAddinsDir)"
+          OverwriteReadOnlyFiles="true" />
+
+    <ItemGroup>
+      <DllsParaDesplegar Include="$(TargetDir)*.dll"
+                         Exclude="$(TargetDir)RevitAPI*.dll" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(DllsParaDesplegar)"
+          DestinationFolder="$(RevitAddinsDir)"
+          OverwriteReadOnlyFiles="true"
+          ContinueOnError="true" />
+
+    <Message Text="PostBuild: RvtConstructionOS copiado a $(RevitAddinsDir)" Importance="high" />
+  </Target>
+</Project>

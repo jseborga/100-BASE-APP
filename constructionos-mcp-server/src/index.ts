@@ -309,6 +309,94 @@ server.tool(
 )
 
 // ============================================================
+// TOOLS — BIM operations
+// ============================================================
+
+server.tool(
+  'get_bim_imports',
+  'List BIM imports for a project. Returns import history with element counts and status.',
+  {
+    proyecto_id: z.string().uuid().describe('Project UUID'),
+  },
+  async (params) => {
+    const result = await callWebhook('get_bim_imports', params)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+server.tool(
+  'get_bim_elements',
+  'Get BIM elements for a specific import. Returns elements with Revit category, matched partida, and calculated metrado.',
+  {
+    importacion_id: z.string().uuid().describe('Import UUID'),
+    estado: z.enum(['pendiente', 'mapeado', 'revisado', 'error']).optional().describe('Filter by element status'),
+    limit: z.number().optional().describe('Max results (default 100, max 500)'),
+    offset: z.number().optional().describe('Pagination offset'),
+  },
+  async (params) => {
+    const result = await callWebhook('get_bim_elements', params)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+server.tool(
+  'get_revit_mapeos',
+  'Get Revit category → partida mapping rules. Shows formulas used to calculate metrados from BIM parameters (Area, Volume, Length, Count).',
+  {
+    revit_categoria_id: z.string().uuid().optional().describe('Filter by Revit category UUID'),
+  },
+  async (params) => {
+    const result = await callWebhook('get_revit_mapeos', params)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+server.tool(
+  'import_bim_elements',
+  'Import BIM elements from Revit into a project. Creates an importacion record and inserts all elements. Auto-resolves Revit category by name (Walls, Floors, Structural Columns, etc.).',
+  {
+    proyecto_id: z.string().uuid().describe('Project UUID'),
+    archivo_nombre: z.string().optional().describe('Source file name (default: "Revit Export")'),
+    elementos: z.array(z.object({
+      revit_id: z.string().describe('Revit ElementId'),
+      categoria: z.string().describe('Revit category name (Walls, Floors, Structural Columns, etc.)'),
+      familia: z.string().describe('Revit family name'),
+      tipo: z.string().describe('Revit type name'),
+      parametros: z.record(z.string(), z.number()).describe('Parameters: { Area, Volume, Length, Height, Width, Count, OpeningsArea, Perimeter, ... }'),
+    })).describe('Array of BIM elements to import'),
+  },
+  async (params) => {
+    const result = await callWebhook('import_bim_elements', params)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+server.tool(
+  'match_bim_elements',
+  'Run formula-based matching on imported BIM elements. Evaluates revit_mapeos formulas against element parameters, assigns partida_id + metrado_calculado. Creates derived elements when one Revit element maps to multiple partidas (e.g., wall → brick + plaster + paint).',
+  {
+    importacion_id: z.string().uuid().describe('Import UUID to process'),
+  },
+  async (params) => {
+    const result = await callWebhook('match_bim_elements', params)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+server.tool(
+  'confirm_bim_match',
+  'Confirm matched BIM elements and create/update proyecto_partidas with metrado_bim. Aggregates metrados by partida, creates new proyecto_partidas or updates existing ones, and reorders by chapter.',
+  {
+    importacion_id: z.string().uuid().describe('Import UUID'),
+    elemento_ids: z.array(z.string().uuid()).optional().describe('Optional: confirm only specific element UUIDs (default: all matched)'),
+  },
+  async (params) => {
+    const result = await callWebhook('confirm_bim_match', params)
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
+// ============================================================
 // Start server
 // ============================================================
 

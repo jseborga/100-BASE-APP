@@ -96,6 +96,14 @@ const ACTIONS: Record<string, ActionHandler> = {
   bulk_create_partidas: handleBulkCreatePartidas,
   bulk_add_localizaciones: handleBulkAddLocalizaciones,
   reorder_project_partidas: handleReorderProjectPartidas,
+
+  // --- BIM operations ---
+  get_bim_imports: handleGetBimImports,
+  get_bim_elements: handleGetBimElements,
+  get_revit_mapeos: handleGetRevitMapeos,
+  import_bim_elements: handleImportBimElements,
+  match_bim_elements: handleMatchBimElements,
+  confirm_bim_match: handleConfirmBimMatch,
 }
 
 // Documentation for GET discovery
@@ -179,6 +187,30 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
   reorder_project_partidas: {
     description: 'Reorder project partidas by logical chapter sequence. Groups partidas by chapter in construction order, sorts alphabetically within each chapter.',
     params: '{ proyecto_id: string }',
+  },
+  get_bim_imports: {
+    description: 'List BIM imports for a project with element stats',
+    params: '{ proyecto_id: string }',
+  },
+  get_bim_elements: {
+    description: 'Get BIM elements for an import with category and partida detail',
+    params: '{ importacion_id: string, estado?: "pendiente"|"mapeado"|"revisado"|"error", limit?: number, offset?: number }',
+  },
+  get_revit_mapeos: {
+    description: 'Get Revit category → partida mapping rules with formulas',
+    params: '{ revit_categoria_id?: string }',
+  },
+  import_bim_elements: {
+    description: 'Import BIM elements from Revit. Creates importacion + elements, auto-resolves category by name.',
+    params: '{ proyecto_id: string, archivo_nombre?: string, elementos: Array<{ revit_id: string, categoria: string, familia: string, tipo: string, parametros: Record<string,number> }> }',
+  },
+  match_bim_elements: {
+    description: 'Run formula-based matching on imported BIM elements. Evaluates revit_mapeos formulas, assigns partida_id + metrado_calculado. Creates derived elements for multiple mappings per category.',
+    params: '{ importacion_id: string }',
+  },
+  confirm_bim_match: {
+    description: 'Confirm matched BIM elements, creating/updating proyecto_partidas with metrado_bim. Optionally confirm only specific elements.',
+    params: '{ importacion_id: string, elemento_ids?: string[] }',
   },
 }
 
@@ -816,5 +848,395 @@ async function handleReorderProjectPartidas(params: Record<string, unknown>) {
     total: sorted.length,
     message: `${updated} partidas reordered in logical construction sequence`,
     chapters: summary,
+  }
+}
+
+// ============================================================
+// BIM Formula Evaluator
+// ============================================================
+
+function evaluateFormula(formula: string, parametros: Record<string, number>): number | null {
+  try {
+    let expression = formula
+    // Replace variable names with values (longest names first to avoid partial matches)
+    const keys = Object.keys(parametros).sort((a, b) => b.length - a.length)
+    for (const key of keys) {
+      expression = expression.replace(new RegExp(`\\b${key}\\b`, 'g'), String(parametros[key]))
+    }
+
+    // If unreplaced variables remain, return null
+    if (/[a-zA-Z_]/.test(expression)) return null
+
+    // Only allow numbers, operators, parentheses, spaces, dots
+    if (!/^[\d\s.+\-*/()]+$/.test(expression)) return null
+
+    const result = Function(`"use strict"; return (${expression})`)()
+    return typeof result === 'number' && isFinite(result) && result >= 0
+      ? Math.round(result * 10000) / 10000
+      : null
+  } catch {
+    return null
+  }
+}
+
+// ============================================================
+// BIM Handlers
+// ============================================================
+
+async function handleGetBimImports(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const proyecto_id = params.proyecto_id as string
+  if (!proyecto_id) throw new Error('proyecto_id is required')
+
+  const { data, error } = await admin
+    .from('bim_importaciones')
+    .select('id, proyecto_id, archivo_nombre, total_elementos, elementos_mapeados, estado, metadata, created_at')
+    .eq('proyecto_id', proyecto_id)
+    .order('created_at', { ascending: false })
+
+  if (error) throw new Error(error.message)
+  return { imports: data || [], count: data?.length || 0 }
+}
+
+async function handleGetBimElements(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const importacion_id = params.importacion_id as string
+  if (!importacion_id) throw new Error('importacion_id is required')
+
+  const estado = params.estado as string | undefined
+  const limit = Math.min((params.limit as number) || 100, 500)
+  const offset = (params.offset as number) || 0
+
+  let query = admin
+    .from('bim_elementos')
+    .select(`
+      id, revit_id, familia, tipo, parametros, metrado_calculado, estado,
+      revit_categorias(id, nombre, nombre_es),
+      partidas(id, nombre, unidad, capitulo)
+    `)
+    .eq('importacion_id', importacion_id)
+    .range(offset, offset + limit - 1)
+    .order('created_at', { ascending: true })
+
+  if (estado) query = query.eq('estado', estado)
+
+  const { data, error } = await query
+  if (error) throw new Error(error.message)
+
+  const { count: total } = await admin
+    .from('bim_elementos')
+    .select('id', { count: 'exact', head: true })
+    .eq('importacion_id', importacion_id)
+
+  return { elements: data || [], count: data?.length || 0, total: total || 0, offset, limit }
+}
+
+async function handleGetRevitMapeos(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const revit_categoria_id = params.revit_categoria_id as string | undefined
+
+  let query = admin
+    .from('revit_mapeos')
+    .select(`
+      id, formula, parametro_principal, descripcion, prioridad,
+      revit_categorias(id, nombre, nombre_es),
+      partidas(id, nombre, unidad, capitulo)
+    `)
+    .order('revit_categoria_id')
+    .order('prioridad', { ascending: true })
+
+  if (revit_categoria_id) query = query.eq('revit_categoria_id', revit_categoria_id)
+
+  const { data, error } = await query
+  if (error) throw new Error(error.message)
+  return { mapeos: data || [], count: data?.length || 0 }
+}
+
+async function handleImportBimElements(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const proyecto_id = params.proyecto_id as string
+  const archivo_nombre = (params.archivo_nombre as string) || 'Revit Export'
+  const elementos = params.elementos as Array<{
+    revit_id: string
+    categoria: string
+    familia: string
+    tipo: string
+    parametros: Record<string, number>
+  }>
+
+  if (!proyecto_id) throw new Error('proyecto_id is required')
+  if (!elementos?.length) throw new Error('elementos array is required')
+
+  // Load all revit categories for name→id resolution
+  const { data: categorias } = await admin
+    .from('revit_categorias')
+    .select('id, nombre')
+
+  const catMap = new Map((categorias || []).map(c => [c.nombre, c.id]))
+
+  // Create importacion
+  const { data: importacion, error: impErr } = await admin
+    .from('bim_importaciones')
+    .insert({
+      proyecto_id,
+      archivo_nombre,
+      total_elementos: elementos.length,
+      elementos_mapeados: 0,
+      estado: 'pendiente',
+      metadata: { source: 'mcp_webhook' },
+    })
+    .select()
+    .single()
+
+  if (impErr) throw new Error(impErr.message)
+
+  // Insert elements in batches of 50
+  const rows = elementos.map(e => ({
+    importacion_id: importacion.id,
+    revit_id: e.revit_id || null,
+    revit_categoria_id: catMap.get(e.categoria) || null,
+    familia: e.familia || null,
+    tipo: e.tipo || null,
+    parametros: e.parametros || {},
+    estado: 'pendiente' as const,
+  }))
+
+  for (let i = 0; i < rows.length; i += 50) {
+    const batch = rows.slice(i, i + 50)
+    const { error: elemErr } = await admin.from('bim_elementos').insert(batch)
+    if (elemErr) throw new Error(elemErr.message)
+  }
+
+  const withCategory = rows.filter(r => r.revit_categoria_id !== null).length
+  const unknownCategories = [...new Set(
+    elementos.filter(e => !catMap.has(e.categoria)).map(e => e.categoria)
+  )]
+
+  return {
+    importacion_id: importacion.id,
+    total_elementos: elementos.length,
+    con_categoria: withCategory,
+    sin_categoria: elementos.length - withCategory,
+    categorias_desconocidas: unknownCategories,
+    message: `Import created: ${elementos.length} elements (${withCategory} with valid category)`,
+  }
+}
+
+async function handleMatchBimElements(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const importacion_id = params.importacion_id as string
+  if (!importacion_id) throw new Error('importacion_id is required')
+
+  // Update import status
+  await admin.from('bim_importaciones').update({ estado: 'procesando' }).eq('id', importacion_id)
+
+  // Load all pending elements
+  const { data: elementos, error } = await admin
+    .from('bim_elementos')
+    .select('id, revit_id, revit_categoria_id, familia, tipo, parametros')
+    .eq('importacion_id', importacion_id)
+    .eq('estado', 'pendiente')
+
+  if (error) throw new Error(error.message)
+  if (!elementos?.length) {
+    await admin.from('bim_importaciones').update({ estado: 'completado' }).eq('id', importacion_id)
+    return { original_elements: 0, matched: 0, derived_created: 0, no_match: 0, message: 'No pending elements found' }
+  }
+
+  // Load all mapeos grouped by category
+  const { data: mapeos } = await admin
+    .from('revit_mapeos')
+    .select('id, revit_categoria_id, partida_id, formula, parametro_principal, prioridad')
+    .order('prioridad', { ascending: true })
+
+  if (!mapeos?.length) {
+    await admin.from('bim_importaciones').update({ estado: 'error' }).eq('id', importacion_id)
+    throw new Error('No mapeos configured in the system')
+  }
+
+  const mapeosByCat = new Map<string, typeof mapeos>()
+  for (const m of mapeos) {
+    const cid = m.revit_categoria_id as string
+    if (!mapeosByCat.has(cid)) mapeosByCat.set(cid, [])
+    mapeosByCat.get(cid)!.push(m)
+  }
+
+  let matched = 0
+  let derivedCreated = 0
+  let noMatch = 0
+
+  for (const elem of elementos) {
+    const catId = elem.revit_categoria_id as string
+    if (!catId) {
+      await admin.from('bim_elementos').update({ estado: 'error' }).eq('id', elem.id)
+      noMatch++
+      continue
+    }
+
+    const catMapeos = mapeosByCat.get(catId)
+    if (!catMapeos?.length) {
+      await admin.from('bim_elementos').update({ estado: 'error' }).eq('id', elem.id)
+      noMatch++
+      continue
+    }
+
+    const paramData = (elem.parametros || {}) as Record<string, number>
+    let firstDone = false
+
+    for (const mapeo of catMapeos) {
+      const result = evaluateFormula(mapeo.formula, paramData)
+      if (result === null || result <= 0) continue
+
+      if (!firstDone) {
+        // Update original element with first matching mapeo
+        await admin.from('bim_elementos').update({
+          partida_id: mapeo.partida_id,
+          metrado_calculado: result,
+          estado: 'mapeado',
+        }).eq('id', elem.id)
+        firstDone = true
+        matched++
+      } else {
+        // Create derived element for additional mapeos
+        await admin.from('bim_elementos').insert({
+          importacion_id,
+          revit_id: elem.revit_id,
+          revit_categoria_id: catId,
+          familia: elem.familia,
+          tipo: elem.tipo,
+          parametros: elem.parametros,
+          partida_id: mapeo.partida_id,
+          metrado_calculado: result,
+          estado: 'mapeado',
+        })
+        derivedCreated++
+        matched++
+      }
+    }
+
+    if (!firstDone) {
+      await admin.from('bim_elementos').update({ estado: 'error' }).eq('id', elem.id)
+      noMatch++
+    }
+  }
+
+  // Update importacion stats
+  await admin.from('bim_importaciones').update({
+    elementos_mapeados: matched,
+    estado: 'completado',
+  }).eq('id', importacion_id)
+
+  return {
+    original_elements: elementos.length,
+    matched,
+    derived_created: derivedCreated,
+    no_match: noMatch,
+    message: `Match complete: ${matched} mappings from ${elementos.length} elements (${derivedCreated} derived)`,
+  }
+}
+
+async function handleConfirmBimMatch(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const importacion_id = params.importacion_id as string
+  const elemento_ids = params.elemento_ids as string[] | undefined
+
+  if (!importacion_id) throw new Error('importacion_id is required')
+
+  // Get the import to find proyecto_id
+  const { data: importacion } = await admin
+    .from('bim_importaciones')
+    .select('proyecto_id')
+    .eq('id', importacion_id)
+    .single()
+
+  if (!importacion) throw new Error('Import not found')
+  const proyecto_id = importacion.proyecto_id as string
+
+  // Load matched elements
+  let query = admin
+    .from('bim_elementos')
+    .select('partida_id, metrado_calculado')
+    .eq('importacion_id', importacion_id)
+    .eq('estado', 'mapeado')
+
+  if (elemento_ids?.length) query = query.in('id', elemento_ids)
+
+  const { data: elementos, error } = await query
+  if (error) throw new Error(error.message)
+  if (!elementos?.length) throw new Error('No matched elements to confirm')
+
+  // Aggregate metrados by partida
+  const partidaMetrados = new Map<string, number>()
+  for (const elem of elementos) {
+    const pid = elem.partida_id as string
+    if (!pid) continue
+    const met = (elem.metrado_calculado as number) || 0
+    partidaMetrados.set(pid, (partidaMetrados.get(pid) || 0) + met)
+  }
+
+  // Get current max orden for new partidas
+  const { data: maxRow } = await admin
+    .from('proyecto_partidas')
+    .select('orden')
+    .eq('proyecto_id', proyecto_id)
+    .order('orden', { ascending: false })
+    .limit(1)
+    .single()
+
+  let nextOrden = ((maxRow?.orden as number) ?? 0) + 1
+  let created = 0
+  let updated = 0
+
+  for (const [partida_id, metrado_bim] of partidaMetrados) {
+    const rounded = Math.round(metrado_bim * 10000) / 10000
+
+    // Check if partida already in project
+    const { data: existing } = await admin
+      .from('proyecto_partidas')
+      .select('id, metrado_bim')
+      .eq('proyecto_id', proyecto_id)
+      .eq('partida_id', partida_id)
+      .maybeSingle()
+
+    if (existing) {
+      const newBim = ((existing.metrado_bim as number) || 0) + rounded
+      await admin
+        .from('proyecto_partidas')
+        .update({ metrado_bim: Math.round(newBim * 10000) / 10000 })
+        .eq('id', existing.id)
+      updated++
+    } else {
+      await admin
+        .from('proyecto_partidas')
+        .insert({
+          proyecto_id,
+          partida_id,
+          cantidad: 1,
+          metrado_bim: rounded,
+          metrado_final: rounded,
+          orden: nextOrden++,
+        })
+      created++
+    }
+  }
+
+  // Mark confirmed elements as revisado
+  let confirmQ = admin
+    .from('bim_elementos')
+    .update({ estado: 'revisado' })
+    .eq('importacion_id', importacion_id)
+    .eq('estado', 'mapeado')
+
+  if (elemento_ids?.length) confirmQ = confirmQ.in('id', elemento_ids)
+  await confirmQ
+
+  // Reorder project partidas by chapter
+  await handleReorderProjectPartidas({ proyecto_id })
+
+  return {
+    created,
+    updated,
+    total_partidas: partidaMetrados.size,
+    message: `${created} partidas created, ${updated} updated with BIM metrados`,
   }
 }
