@@ -6,6 +6,7 @@ import {
   BarChart3,
   Book,
   Bot,
+  GitBranch,
   Home,
   LogOut,
   Settings,
@@ -35,6 +36,7 @@ export function Sidebar({ collapsed, onToggle, onLogout }: SidebarProps) {
     { href: '/dashboard', label: 'Panel', icon: Home },
     { href: '/dashboard/proyectos', label: 'Proyectos', icon: Folder },
     { href: '/dashboard/catalogo', label: 'Catalogo', icon: Book },
+    { href: '/dashboard/mapeos', label: 'Mapeos BIM', icon: GitBranch },
     { href: '/dashboard/agentes', label: 'Agentes IA', icon: Bot },
     { href: '/dashboard/configuracion', label: 'Configuracion', icon: Settings },
   ]
