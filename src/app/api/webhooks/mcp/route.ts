@@ -102,10 +102,18 @@ const ACTIONS: Record<string, ActionHandler> = {
   // --- BIM operations ---
   get_bim_imports: handleGetBimImports,
   get_bim_elements: handleGetBimElements,
+  get_bim_element_detail: handleGetBimElementDetail,
   get_revit_mapeos: handleGetRevitMapeos,
   import_bim_elements: handleImportBimElements,
   match_bim_elements: handleMatchBimElements,
   confirm_bim_match: handleConfirmBimMatch,
+
+  // --- BIM Mapping Management (AI agent + web) ---
+  create_revit_mapeo: handleCreateRevitMapeo,
+  update_revit_mapeo: handleUpdateRevitMapeo,
+  delete_revit_mapeo: handleDeleteRevitMapeo,
+  apply_mapping_to_element: handleApplyMappingToElement,
+  get_element_mappings: handleGetElementMappings,
 }
 
 // Documentation for GET discovery
@@ -221,6 +229,30 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
   confirm_bim_match: {
     description: 'Confirm matched BIM elements, creating/updating proyecto_partidas with metrado_bim. Optionally confirm only specific elements.',
     params: '{ importacion_id: string, elemento_ids?: string[] }',
+  },
+  get_bim_element_detail: {
+    description: 'Get full detail of a single BIM element including all numeric params, metadata, and available mapeos for its category',
+    params: '{ elemento_id: string }',
+  },
+  create_revit_mapeo: {
+    description: 'Create a new mapping rule: Revit category → partida with formula. Formula uses param names (Area, Volume, Length, Count, Width, Height, OpeningsArea, etc.)',
+    params: '{ revit_categoria_id: string, partida_id: string, formula: string, parametro_principal?: string, descripcion?: string, prioridad?: number }',
+  },
+  update_revit_mapeo: {
+    description: 'Update an existing mapping rule (formula, partida, priority, etc.)',
+    params: '{ mapeo_id: string, formula?: string, partida_id?: string, parametro_principal?: string, descripcion?: string, prioridad?: number }',
+  },
+  delete_revit_mapeo: {
+    description: 'Delete a mapping rule',
+    params: '{ mapeo_id: string }',
+  },
+  apply_mapping_to_element: {
+    description: 'Manually assign a partida to a BIM element with optional formula evaluation. Used by AI agent to suggest/apply mappings.',
+    params: '{ elemento_id: string, partida_id: string, formula?: string, metrado?: number }',
+  },
+  get_element_mappings: {
+    description: 'Get confirmed/mapped element results for Revit write-back. Returns revit_id → partida code + metrado.',
+    params: '{ importacion_id?: string, proyecto_id?: string }',
   },
 }
 
@@ -1027,21 +1059,27 @@ async function handleImportBimElements(params: Record<string, unknown>) {
   const archivo_nombre = (params.archivo_nombre as string) || 'Revit Export'
   const elementos = params.elementos as Array<{
     revit_id: string
+    unique_id?: string
     categoria: string
     familia: string
     tipo: string
     parametros: Record<string, number>
+    metadata?: Record<string, string>
   }>
 
   if (!proyecto_id) throw new Error('proyecto_id is required')
   if (!elementos?.length) throw new Error('elementos array is required')
 
-  // Load all revit categories for name→id resolution
+  // Load all revit categories for name→id resolution (try nombre and nombre_es)
   const { data: categorias } = await admin
     .from('revit_categorias')
-    .select('id, nombre')
+    .select('id, nombre, nombre_es')
 
-  const catMap = new Map((categorias || []).map(c => [c.nombre, c.id]))
+  const catMap = new Map<string, string>()
+  for (const c of categorias || []) {
+    catMap.set(c.nombre, c.id)
+    if (c.nombre_es) catMap.set(c.nombre_es, c.id)
+  }
 
   // Create importacion
   const { data: importacion, error: impErr } = await admin
@@ -1060,15 +1098,25 @@ async function handleImportBimElements(params: Record<string, unknown>) {
   if (impErr) throw new Error(impErr.message)
 
   // Insert elements in batches of 50
-  const rows = elementos.map(e => ({
-    importacion_id: importacion.id,
-    revit_id: e.revit_id || null,
-    revit_categoria_id: catMap.get(e.categoria) || null,
-    familia: e.familia || null,
-    tipo: e.tipo || null,
-    parametros: e.parametros || {},
-    estado: 'pendiente' as const,
-  }))
+  // Store numeric params + text metadata together in JSONB parametros
+  const rows = elementos.map(e => {
+    const allParams: Record<string, unknown> = { ...(e.parametros || {}) }
+    if (e.metadata && Object.keys(e.metadata).length > 0) {
+      allParams._metadata = e.metadata
+    }
+    if (e.unique_id) {
+      allParams._unique_id = e.unique_id
+    }
+    return {
+      importacion_id: importacion.id,
+      revit_id: e.revit_id || null,
+      revit_categoria_id: catMap.get(e.categoria) || null,
+      familia: e.familia || null,
+      tipo: e.tipo || null,
+      parametros: allParams,
+      estado: 'pendiente' as const,
+    }
+  })
 
   for (let i = 0; i < rows.length; i += 50) {
     const batch = rows.slice(i, i + 50)
@@ -1149,7 +1197,12 @@ async function handleMatchBimElements(params: Record<string, unknown>) {
       continue
     }
 
-    const paramData = (elem.parametros || {}) as Record<string, number>
+    // Extract only numeric params (skip _metadata, _unique_id)
+    const rawParams = (elem.parametros || {}) as Record<string, unknown>
+    const paramData: Record<string, number> = {}
+    for (const [k, v] of Object.entries(rawParams)) {
+      if (!k.startsWith('_') && typeof v === 'number') paramData[k] = v
+    }
     let firstDone = false
 
     for (const mapeo of catMapeos) {
@@ -1308,4 +1361,265 @@ async function handleConfirmBimMatch(params: Record<string, unknown>) {
     total_partidas: partidaMetrados.size,
     message: `${created} partidas created, ${updated} updated with BIM metrados`,
   }
+}
+
+// ============================================================
+// BIM Mapping Management — CRUD for revit_mapeos + AI helpers
+// ============================================================
+
+async function handleGetBimElementDetail(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const elemento_id = params.elemento_id as string
+  if (!elemento_id) throw new Error('elemento_id is required')
+
+  const { data, error } = await admin
+    .from('bim_elementos')
+    .select(`
+      id, revit_id, familia, tipo, parametros, metrado_calculado, estado,
+      revit_categorias(id, nombre, nombre_es, parametros_clave),
+      partidas(id, nombre, unidad, capitulo, descripcion),
+      bim_importaciones(id, proyecto_id, archivo_nombre)
+    `)
+    .eq('id', elemento_id)
+    .single()
+
+  if (error) throw new Error(error.message)
+
+  // Extract metadata and numeric params separately for readability
+  const rawParams = (data.parametros || {}) as Record<string, unknown>
+  const numericParams: Record<string, number> = {}
+  const metadata: Record<string, string> = {}
+  for (const [k, v] of Object.entries(rawParams)) {
+    if (k === '_metadata' && typeof v === 'object' && v !== null) {
+      Object.assign(metadata, v)
+    } else if (k === '_unique_id') {
+      metadata.unique_id = v as string
+    } else if (typeof v === 'number') {
+      numericParams[k] = v
+    }
+  }
+
+  // Get available mapeos for this element's category
+  const catData = data.revit_categorias as unknown as { id: string } | null
+  const catId = catData?.id
+  let availableMapeos: unknown[] = []
+  if (catId) {
+    const { data: mapeos } = await admin
+      .from('revit_mapeos')
+      .select('id, formula, parametro_principal, descripcion, prioridad, partidas(id, nombre, unidad, capitulo)')
+      .eq('revit_categoria_id', catId)
+      .order('prioridad', { ascending: true })
+    availableMapeos = mapeos || []
+  }
+
+  return {
+    element: {
+      ...data,
+      numeric_params: numericParams,
+      metadata,
+    },
+    available_mapeos: availableMapeos,
+  }
+}
+
+async function handleCreateRevitMapeo(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const revit_categoria_id = params.revit_categoria_id as string
+  const partida_id = params.partida_id as string
+  const formula = params.formula as string
+  const parametro_principal = (params.parametro_principal as string) || null
+  const descripcion = (params.descripcion as string) || null
+  const prioridad = (params.prioridad as number) || 0
+
+  if (!revit_categoria_id) throw new Error('revit_categoria_id is required')
+  if (!partida_id) throw new Error('partida_id is required')
+  if (!formula) throw new Error('formula is required (e.g. "Area * 1.05", "Volume", "Count")')
+
+  // Validate formula syntax by testing with dummy values
+  const testParams: Record<string, number> = {
+    Area: 100, AreaBruta: 110, AreaExt: 100, OpeningsArea: 10,
+    Volume: 10, Length: 5, Height: 3, Width: 0.2, Count: 1,
+  }
+  const testResult = evaluateFormula(formula, testParams)
+  if (testResult === null) {
+    throw new Error(`Invalid formula: "${formula}" — must be arithmetic using param names`)
+  }
+
+  const { data, error } = await admin
+    .from('revit_mapeos')
+    .insert({
+      revit_categoria_id,
+      partida_id,
+      formula,
+      parametro_principal,
+      descripcion,
+      prioridad,
+    })
+    .select('id, formula, parametro_principal, descripcion, prioridad')
+    .single()
+
+  if (error) throw new Error(error.message)
+  return { mapeo: data, test_result: testResult }
+}
+
+async function handleUpdateRevitMapeo(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const mapeo_id = params.mapeo_id as string
+  if (!mapeo_id) throw new Error('mapeo_id is required')
+
+  const updates: Record<string, unknown> = {}
+  if (params.formula !== undefined) {
+    const formula = params.formula as string
+    const testParams: Record<string, number> = {
+      Area: 100, AreaBruta: 110, AreaExt: 100, OpeningsArea: 10,
+      Volume: 10, Length: 5, Height: 3, Width: 0.2, Count: 1,
+    }
+    if (evaluateFormula(formula, testParams) === null) {
+      throw new Error(`Invalid formula: "${formula}"`)
+    }
+    updates.formula = formula
+  }
+  if (params.partida_id !== undefined) updates.partida_id = params.partida_id
+  if (params.parametro_principal !== undefined) updates.parametro_principal = params.parametro_principal
+  if (params.descripcion !== undefined) updates.descripcion = params.descripcion
+  if (params.prioridad !== undefined) updates.prioridad = params.prioridad
+
+  if (Object.keys(updates).length === 0) throw new Error('No fields to update')
+
+  const { data, error } = await admin
+    .from('revit_mapeos')
+    .update(updates)
+    .eq('id', mapeo_id)
+    .select('id, formula, parametro_principal, descripcion, prioridad')
+    .single()
+
+  if (error) throw new Error(error.message)
+  return { mapeo: data }
+}
+
+async function handleDeleteRevitMapeo(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const mapeo_id = params.mapeo_id as string
+  if (!mapeo_id) throw new Error('mapeo_id is required')
+
+  const { error } = await admin
+    .from('revit_mapeos')
+    .delete()
+    .eq('id', mapeo_id)
+
+  if (error) throw new Error(error.message)
+  return { deleted: true }
+}
+
+async function handleApplyMappingToElement(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const elemento_id = params.elemento_id as string
+  const partida_id = params.partida_id as string
+  const formula = params.formula as string | undefined
+  const metrado = params.metrado as number | undefined
+
+  if (!elemento_id) throw new Error('elemento_id is required')
+  if (!partida_id) throw new Error('partida_id is required')
+
+  // Get element to evaluate formula against its params
+  const { data: elem, error: fetchErr } = await admin
+    .from('bim_elementos')
+    .select('parametros')
+    .eq('id', elemento_id)
+    .single()
+
+  if (fetchErr) throw new Error(fetchErr.message)
+
+  let calculatedMetrado = metrado
+  if (!calculatedMetrado && formula) {
+    const rawParams = (elem.parametros || {}) as Record<string, unknown>
+    const numParams: Record<string, number> = {}
+    for (const [k, v] of Object.entries(rawParams)) {
+      if (!k.startsWith('_') && typeof v === 'number') numParams[k] = v
+    }
+    const result = evaluateFormula(formula, numParams)
+    if (result === null) throw new Error(`Formula "${formula}" failed to evaluate`)
+    calculatedMetrado = result
+  }
+
+  if (!calculatedMetrado) throw new Error('Either formula or metrado is required')
+
+  const { data, error } = await admin
+    .from('bim_elementos')
+    .update({
+      partida_id,
+      metrado_calculado: Math.round(calculatedMetrado * 10000) / 10000,
+      estado: 'mapeado',
+    })
+    .eq('id', elemento_id)
+    .select('id, partida_id, metrado_calculado, estado')
+    .single()
+
+  if (error) throw new Error(error.message)
+  return { element: data, formula_used: formula || null }
+}
+
+async function handleGetElementMappings(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const importacion_id = params.importacion_id as string
+  const proyecto_id = params.proyecto_id as string
+
+  if (!importacion_id && !proyecto_id) {
+    throw new Error('importacion_id or proyecto_id is required')
+  }
+
+  let query = admin
+    .from('bim_elementos')
+    .select(`
+      id, revit_id, familia, tipo, metrado_calculado, estado,
+      parametros,
+      revit_categorias(nombre, nombre_es),
+      partidas(id, nombre, unidad, capitulo,
+        partida_localizaciones(codigo_local, referencia_norma, estandares(codigo))
+      )
+    `)
+    .in('estado', ['mapeado', 'revisado', 'confirmado'])
+    .not('partida_id', 'is', null)
+
+  if (importacion_id) {
+    query = query.eq('importacion_id', importacion_id)
+  } else {
+    // Get latest import for project
+    const { data: imp } = await admin
+      .from('bim_importaciones')
+      .select('id')
+      .eq('proyecto_id', proyecto_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+    if (!imp) return { mappings: [], count: 0 }
+    query = query.eq('importacion_id', imp.id)
+  }
+
+  const { data, error } = await query.order('revit_id')
+  if (error) throw new Error(error.message)
+
+  // Format for Revit write-back: revit_id → partida code + metrado
+  const mappings = (data || []).map(el => {
+    const rawParams = (el.parametros || {}) as Record<string, unknown>
+    const uniqueId = rawParams._unique_id as string || null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const partida = el.partidas as any
+    const cat = el.revit_categorias as any
+    const loc = partida?.partida_localizaciones?.[0]
+    return {
+      revit_id: el.revit_id,
+      unique_id: uniqueId,
+      categoria: cat?.nombre || null,
+      familia: el.familia,
+      tipo: el.tipo,
+      partida_nombre: partida?.nombre || null,
+      partida_codigo: loc?.codigo_local || null,
+      partida_unidad: partida?.unidad || null,
+      metrado: el.metrado_calculado,
+      estado: el.estado,
+    }
+  })
+
+  return { mappings, count: mappings.length }
 }

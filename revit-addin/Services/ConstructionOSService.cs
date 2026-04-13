@@ -160,6 +160,9 @@ namespace RvtConstructionOS.Services
         [System.Text.Json.Serialization.JsonPropertyName("revit_id")]
         public string RevitId { get; set; } = string.Empty;
 
+        [System.Text.Json.Serialization.JsonPropertyName("unique_id")]
+        public string UniqueId { get; set; } = string.Empty;
+
         [System.Text.Json.Serialization.JsonPropertyName("categoria")]
         public string Categoria { get; set; } = string.Empty;
 
@@ -171,5 +174,8 @@ namespace RvtConstructionOS.Services
 
         [System.Text.Json.Serialization.JsonPropertyName("parametros")]
         public Dictionary<string, double> Parametros { get; set; } = new();
+
+        [System.Text.Json.Serialization.JsonPropertyName("metadata")]
+        public Dictionary<string, string> Metadata { get; set; } = new();
     }
 }
