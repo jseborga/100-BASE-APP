@@ -2,12 +2,14 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="ConstructionOS — Configuración"
-        Width="520" Height="420"
+        Width="540" Height="480"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize">
+        ResizeMode="NoResize"
+        Loaded="Window_Loaded">
 
     <Grid Margin="20">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -52,22 +54,34 @@
             </Grid>
         </StackPanel>
 
+        <!-- Proyecto info (visible when project is selected) -->
+        <Border Grid.Row="4" x:Name="pnlProyectoInfo" Background="#E8F0FE"
+                CornerRadius="6" Padding="12,8" Margin="0,0,0,10"
+                Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock x:Name="txtProyectoInfo" FontWeight="SemiBold"
+                           Foreground="#1A56DB" FontSize="13"/>
+                <TextBlock x:Name="txtProyectoDetalle" Foreground="#4B5563"
+                           FontSize="11" Margin="0,2,0,0"/>
+            </StackPanel>
+        </Border>
+
         <!-- Estado -->
-        <TextBlock Grid.Row="4" x:Name="txtEstado" Foreground="Gray"
+        <TextBlock Grid.Row="5" x:Name="txtEstado" Foreground="Gray"
                    FontStyle="Italic" TextWrapping="Wrap" Margin="0,0,0,10"/>
 
         <!-- Spacer -->
-        <Border Grid.Row="5"/>
+        <Border Grid.Row="6"/>
 
         <!-- Botones -->
-        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="btnProbar" Content="Probar Conexión"
                     Width="120" Height="32" Margin="0,0,10,0"
                     Click="BtnProbar_Click"/>
             <Button x:Name="btnGuardar" Content="Guardar"
                     Width="100" Height="32" Margin="0,0,10,0"
                     Click="BtnGuardar_Click" IsDefault="True"/>
-            <Button Content="Cancelar" Width="80" Height="32"
+            <Button Content="Cerrar" Width="80" Height="32"
                     Click="BtnCancelar_Click" IsCancel="True"/>
         </StackPanel>
     </Grid>

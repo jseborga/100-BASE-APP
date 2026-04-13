@@ -10,7 +10,7 @@ import {
   ArrowLeft, MapPin, Building2, Calendar, Bot, FileSpreadsheet,
   Upload, Trash2, Check, X, Pencil, Plus, ChevronDown, ChevronRight, Download,
   LayoutTemplate, Loader2, Box, RefreshCw, CheckCircle2, AlertCircle, Clock,
-  Search, GitBranch, Calculator, Layers, Save,
+  Search, GitBranch, Calculator, Layers, Save, Link2, Unlink,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -183,6 +183,12 @@ export default function ProyectoDetailPage() {
   const [mapSaving, setMapSaving] = useState(false)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const mapFormRef = useRef<HTMLDivElement>(null)
+
+  // Partida → BIM linking state
+  const [linkingPartida, setLinkingPartida] = useState<string | null>(null)
+  const [linkSelectedGroups, setLinkSelectedGroups] = useState<Set<string>>(new Set())
+  const [linkFormula, setLinkFormula] = useState('')
+  const [linkSaving, setLinkSaving] = useState(false)
 
   // Derived rule state
   const [showDerived, setShowDerived] = useState(false)
@@ -460,6 +466,91 @@ export default function ProyectoDetailPage() {
       setMapPartidaSearch('')
     }
     setMapPartidaResults([])
+  }
+
+  // --- Partida → BIM linking ---
+  const startLinkBim = (partidaId: string) => {
+    setLinkingPartida(partidaId)
+    setLinkSelectedGroups(new Set())
+    setLinkFormula('')
+  }
+
+  const toggleLinkGroup = (key: string) => {
+    setLinkSelectedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const handleLinkBim = async (partidaId: string) => {
+    if (linkSelectedGroups.size === 0 || !linkFormula.trim() || !activeImportId) return
+    setLinkSaving(true)
+    try {
+      for (const groupKey of linkSelectedGroups) {
+        const group = bimGroups.find(g => g.key === groupKey)
+        if (!group) continue
+        await fetch(`/api/proyectos/${proyectoId}/bim`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            importacion_id: activeImportId,
+            revit_categoria_id: group.categoriaId,
+            familia: group.familia,
+            tipo: group.tipo,
+            partida_id: partidaId,
+            formula: linkFormula,
+          }),
+        })
+      }
+      setLinkingPartida(null)
+      setLinkSelectedGroups(new Set())
+      setLinkFormula('')
+      await fetchBimData(activeImportId || undefined)
+      await fetchData()
+    } catch (err) {
+      console.error('Link BIM error:', err)
+    } finally {
+      setLinkSaving(false)
+    }
+  }
+
+  const handleUnlinkBim = async (partidaId: string) => {
+    if (!activeImportId) return
+    setLinkSaving(true)
+    try {
+      // Find all BIM elements mapped to this partida and reset them
+      const elementsForPartida = (bimData?.elements || []).filter(
+        e => e.partida_id === partidaId && (e.estado === 'mapeado' || e.estado === 'confirmado')
+      )
+      if (elementsForPartida.length === 0) return
+      for (const el of elementsForPartida) {
+        await fetch(`/api/proyectos/${proyectoId}/bim`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            elemento_id: el.id,
+            partida_id: null,
+            metrado_override: null,
+            estado: 'pendiente',
+          }),
+        })
+      }
+      await fetchBimData(activeImportId || undefined)
+      await fetchData()
+    } catch (err) {
+      console.error('Unlink BIM error:', err)
+    } finally {
+      setLinkSaving(false)
+    }
+  }
+
+  // Get BIM groups linked to a specific partida
+  const getLinkedGroups = (partidaId: string): BimGroup[] => {
+    return bimGroups.filter(g =>
+      g.elements.some(e => e.partida_id === partidaId)
+    )
   }
 
   const toggleGroup = (key: string) => {
@@ -1939,12 +2030,13 @@ export default function ProyectoDetailPage() {
           ) : (
             <div className="space-y-2">
               {/* Table header */}
-              <div className="grid grid-cols-[60px_1fr_100px_80px_60px_40px] gap-2 px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider border-b">
+              <div className="grid grid-cols-[60px_1fr_100px_80px_60px_36px_40px] gap-2 px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider border-b">
                 <span>Codigo</span>
                 <span>Partida</span>
                 <span className="text-right">Metrado</span>
                 <span className="text-center">Unidad</span>
                 <span className="text-center">Origen</span>
+                <span className="text-center">{bimData && bimData.imports.length > 0 ? 'BIM' : ''}</span>
                 <span></span>
               </div>
 
@@ -1975,122 +2067,313 @@ export default function ProyectoDetailPage() {
                         const isDeleting = deleteConfirm === p.id
                         const origen = p.metrado_bim != null ? 'BIM' : p.metrado_manual != null ? 'Manual' : '—'
                         const codigoLocal = p.partidas?.partida_localizaciones?.[0]?.codigo_local || ''
+                        const hasBimData = bimData && bimData.imports.length > 0
+                        const linkedGroups = hasBimData ? getLinkedGroups(p.partida_id) : []
+                        const isLinking = linkingPartida === p.id
 
                         return (
-                          <div key={p.id} className="group grid grid-cols-[60px_1fr_100px_80px_60px_40px] gap-2 items-center px-3 py-2 rounded-lg hover:bg-muted/30 transition-colors">
-                            {/* Codigo */}
-                            <span className="text-xs font-mono font-bold text-blue-600">
-                              {codigoLocal || '—'}
-                            </span>
+                          <div key={p.id}>
+                            <div className="group grid grid-cols-[60px_1fr_100px_80px_60px_36px_40px] gap-2 items-center px-3 py-2 rounded-lg hover:bg-muted/30 transition-colors">
+                              {/* Codigo */}
+                              <span className="text-xs font-mono font-bold text-blue-600">
+                                {codigoLocal || '—'}
+                              </span>
 
-                            {/* Name */}
-                            <div className="min-w-0">
-                              <p className="text-sm truncate">
-                                {p.partidas?.nombre || `Partida ${p.partida_id.slice(0, 8)}`}
-                              </p>
-                              {p.notas && (
-                                <p className="text-[11px] text-muted-foreground truncate">{p.notas}</p>
-                              )}
-                            </div>
+                              {/* Name */}
+                              <div className="min-w-0">
+                                <p className="text-sm truncate">
+                                  {p.partidas?.nombre || `Partida ${p.partida_id.slice(0, 8)}`}
+                                </p>
+                                {p.notas && (
+                                  <p className="text-[11px] text-muted-foreground truncate">{p.notas}</p>
+                                )}
+                                {linkedGroups.length > 0 && (
+                                  <p className="text-[10px] text-indigo-600 truncate">
+                                    {linkedGroups.map(g => `${g.familia}/${g.tipo}`).join(', ')}
+                                  </p>
+                                )}
+                              </div>
 
-                            {/* Metrado */}
-                            <div className="text-right">
-                              {isEditing ? (
-                                <div className="flex items-center gap-1 justify-end">
-                                  <Input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={editValue}
-                                    onChange={e => setEditValue(e.target.value)}
-                                    onKeyDown={e => {
-                                      if (e.key === 'Enter') handleUpdateMetrado(p.id)
-                                      if (e.key === 'Escape') setEditingPartida(null)
+                              {/* Metrado */}
+                              <div className="text-right">
+                                {isEditing ? (
+                                  <div className="flex items-center gap-1 justify-end">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      value={editValue}
+                                      onChange={e => setEditValue(e.target.value)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') handleUpdateMetrado(p.id)
+                                        if (e.key === 'Escape') setEditingPartida(null)
+                                      }}
+                                      className="h-7 w-20 text-xs text-right"
+                                      autoFocus
+                                      disabled={isSaving}
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6"
+                                      onClick={() => handleUpdateMetrado(p.id)}
+                                      disabled={isSaving}
+                                    >
+                                      <Check className="w-3 h-3 text-green-600" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6"
+                                      onClick={() => setEditingPartida(null)}
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      setEditingPartida(p.id)
+                                      setEditValue(metrado.toString())
                                     }}
-                                    className="h-7 w-20 text-xs text-right"
-                                    autoFocus
-                                    disabled={isSaving}
-                                  />
+                                    className="text-sm font-medium hover:text-primary transition-colors inline-flex items-center gap-1"
+                                    title="Editar metrado"
+                                  >
+                                    {metrado > 0 ? metrado.toFixed(2) : '—'}
+                                    <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50" />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Unidad */}
+                              <span className="text-xs text-center text-muted-foreground">
+                                {p.partidas?.unidad || '—'}
+                              </span>
+
+                              {/* Origen */}
+                              <span className="text-center">
+                                {origen !== '—' ? (
+                                  <Badge variant="outline" className="text-[10px]">{origen}</Badge>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )}
+                              </span>
+
+                              {/* BIM Link */}
+                              <div className="flex justify-center">
+                                {hasBimData ? (
+                                  linkedGroups.length > 0 ? (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6 text-indigo-600 hover:text-red-600"
+                                      onClick={() => isLinking ? setLinkingPartida(null) : startLinkBim(p.partida_id)}
+                                      title={isLinking ? 'Cerrar' : `${linkedGroups.length} grupo(s) vinculado(s)`}
+                                    >
+                                      {isLinking ? <X className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-indigo-600"
+                                      onClick={() => isLinking ? setLinkingPartida(null) : startLinkBim(p.partida_id)}
+                                      title="Vincular con BIM"
+                                    >
+                                      {isLinking ? <X className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
+                                    </Button>
+                                  )
+                                ) : null}
+                              </div>
+
+                              {/* Actions */}
+                              <div className="flex justify-end">
+                                {isDeleting ? (
+                                  <div className="flex items-center gap-0.5">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6"
+                                      onClick={() => handleRemovePartida(p.id)}
+                                    >
+                                      <Check className="w-3 h-3 text-destructive" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6"
+                                      onClick={() => setDeleteConfirm(null)}
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => handleUpdateMetrado(p.id)}
-                                    disabled={isSaving}
+                                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-destructive"
+                                    onClick={() => setDeleteConfirm(p.id)}
+                                    title="Quitar del proyecto"
                                   >
-                                    <Check className="w-3 h-3 text-green-600" />
+                                    <Trash2 className="w-3 h-3" />
                                   </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => setEditingPartida(null)}
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </Button>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    setEditingPartida(p.id)
-                                    setEditValue(metrado.toString())
-                                  }}
-                                  className="text-sm font-medium hover:text-primary transition-colors inline-flex items-center gap-1"
-                                  title="Editar metrado"
-                                >
-                                  {metrado > 0 ? metrado.toFixed(2) : '—'}
-                                  <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-50" />
-                                </button>
-                              )}
+                                )}
+                              </div>
                             </div>
 
-                            {/* Unidad */}
-                            <span className="text-xs text-center text-muted-foreground">
-                              {p.partidas?.unidad || '—'}
-                            </span>
-
-                            {/* Origen */}
-                            <span className="text-center">
-                              {origen !== '—' ? (
-                                <Badge variant="outline" className="text-[10px]">{origen}</Badge>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">—</span>
-                              )}
-                            </span>
-
-                            {/* Actions */}
-                            <div className="flex justify-end">
-                              {isDeleting ? (
-                                <div className="flex items-center gap-0.5">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => handleRemovePartida(p.id)}
-                                  >
-                                    <Check className="w-3 h-3 text-destructive" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6"
-                                    onClick={() => setDeleteConfirm(null)}
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </Button>
+                            {/* BIM linking expansion panel */}
+                            {isLinking && hasBimData && (
+                              <div className="mx-3 mb-2 mt-1 border rounded-lg bg-indigo-50/30 p-3 space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-sm font-medium flex items-center gap-2">
+                                    <Link2 className="w-4 h-4 text-indigo-600" />
+                                    Vincular BIM a: {p.partidas?.nombre}
+                                  </h4>
+                                  {linkedGroups.length > 0 && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                                      onClick={() => handleUnlinkBim(p.partida_id)}
+                                      disabled={linkSaving}
+                                    >
+                                      <Unlink className="w-3 h-3" />
+                                      Desvincular todo
+                                    </Button>
+                                  )}
                                 </div>
-                              ) : (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-destructive"
-                                  onClick={() => setDeleteConfirm(p.id)}
-                                  title="Quitar del proyecto"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </Button>
-                              )}
-                            </div>
+
+                                {/* Available BIM groups */}
+                                <div>
+                                  <p className="text-[11px] text-muted-foreground mb-1.5">
+                                    Seleccionar grupos BIM ({bimGroups.filter(g => g.estado === 'pendiente' || g.estado === 'sin_match').length} disponibles):
+                                  </p>
+                                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                    {bimGroups.map(group => {
+                                      const isLinkedHere = group.elements.some(e => e.partida_id === p.partida_id)
+                                      const isLinkedElsewhere = !isLinkedHere && group.partida !== null
+                                      const isSelected = linkSelectedGroups.has(group.key)
+                                      const paramKeys = Object.keys(group.sampleParams).filter(k => group.sampleParams[k] > 0)
+
+                                      return (
+                                        <button
+                                          key={group.key}
+                                          onClick={() => !isLinkedElsewhere && toggleLinkGroup(group.key)}
+                                          disabled={isLinkedElsewhere}
+                                          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md border text-left transition-colors ${
+                                            isLinkedHere
+                                              ? 'border-indigo-300 bg-indigo-100/60'
+                                              : isSelected
+                                              ? 'border-indigo-400 bg-indigo-50'
+                                              : isLinkedElsewhere
+                                              ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
+                                              : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/30'
+                                          }`}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={isSelected || isLinkedHere}
+                                            disabled={isLinkedElsewhere || isLinkedHere}
+                                            readOnly
+                                            className="rounded border-gray-300 text-indigo-600 h-3.5 w-3.5"
+                                          />
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-1.5">
+                                              <span className="text-[10px] text-muted-foreground">{group.categoriaEs}</span>
+                                              <span className="text-xs font-medium truncate">{group.familia}</span>
+                                              <span className="text-[10px] text-muted-foreground">/</span>
+                                              <span className="text-xs truncate">{group.tipo}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 mt-0.5">
+                                              <span className="text-[10px] text-muted-foreground">{group.elements.length} elem.</span>
+                                              {paramKeys.slice(0, 4).map(k => (
+                                                <span key={k} className="text-[9px] font-mono text-indigo-600">
+                                                  {k}={group.sampleParams[k] % 1 === 0 ? group.sampleParams[k] : group.sampleParams[k].toFixed(1)}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          </div>
+                                          {isLinkedHere && (
+                                            <Badge variant="outline" className="text-[9px] text-indigo-600 flex-shrink-0">Vinculado</Badge>
+                                          )}
+                                          {isLinkedElsewhere && group.partida && (
+                                            <span className="text-[9px] text-muted-foreground flex-shrink-0 truncate max-w-[120px]">
+                                              → {group.partida.nombre}
+                                            </span>
+                                          )}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* Formula + Apply */}
+                                {linkSelectedGroups.size > 0 && (
+                                  <div className="space-y-2 pt-2 border-t">
+                                    {/* Clickable params from selected groups */}
+                                    {(() => {
+                                      const selectedParams: Record<string, number> = {}
+                                      for (const key of linkSelectedGroups) {
+                                        const g = bimGroups.find(gr => gr.key === key)
+                                        if (g) Object.assign(selectedParams, g.sampleParams)
+                                      }
+                                      const pKeys = Object.keys(selectedParams).filter(k => selectedParams[k] > 0).sort()
+                                      return pKeys.length > 0 ? (
+                                        <div>
+                                          <p className="text-[10px] text-muted-foreground mb-1">Parametros (click para insertar):</p>
+                                          <div className="flex flex-wrap gap-1">
+                                            {pKeys.map(k => (
+                                              <button
+                                                key={k}
+                                                onClick={() => setLinkFormula(prev => prev ? `${prev} ${k}` : k)}
+                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border text-[10px] hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
+                                              >
+                                                <span className="font-mono font-medium text-indigo-700">{k}</span>
+                                                <span className="text-muted-foreground">={selectedParams[k] % 1 === 0 ? selectedParams[k] : selectedParams[k].toFixed(1)}</span>
+                                              </button>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : null
+                                    })()}
+
+                                    <div className="flex items-end gap-2">
+                                      <div className="flex-1">
+                                        <label className="text-[10px] font-medium text-muted-foreground mb-0.5 block">Formula de metrado</label>
+                                        <Input
+                                          placeholder="Ej: Area * 1.05"
+                                          value={linkFormula}
+                                          onChange={e => setLinkFormula(e.target.value)}
+                                          className="h-8 text-xs font-mono"
+                                        />
+                                      </div>
+                                      {linkFormula && (() => {
+                                        const g = bimGroups.find(gr => gr.key === [...linkSelectedGroups][0])
+                                        const result = g ? testFormula(linkFormula, g.sampleParams) : null
+                                        return result ? (
+                                          <span className={`text-xs font-mono ${result.startsWith('Error') ? 'text-red-600' : 'text-green-700'}`}>
+                                            {result}
+                                          </span>
+                                        ) : null
+                                      })()}
+                                      <Button
+                                        size="sm"
+                                        className="h-8 gap-1.5 text-xs"
+                                        disabled={!linkFormula.trim() || linkSaving}
+                                        onClick={() => handleLinkBim(p.partida_id)}
+                                      >
+                                        {linkSaving ? (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                          <Link2 className="w-3.5 h-3.5" />
+                                        )}
+                                        Vincular {linkSelectedGroups.size} grupo{linkSelectedGroups.size !== 1 ? 's' : ''}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )
                       })}

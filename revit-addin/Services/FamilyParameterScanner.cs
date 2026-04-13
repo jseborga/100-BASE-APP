@@ -77,12 +77,12 @@ namespace RvtConstructionOS.Services
             [BuiltInCategory.OST_StructuralFoundation]= "Fundaciones",
         };
 
-        // Parámetros que ya se exportan automáticamente (no mostrar en wizard)
-        private static readonly HashSet<string> _paramsAutoExport = new(StringComparer.OrdinalIgnoreCase)
+        // Parámetros SSA_* que ya se exportan automáticamente (no mostrar en wizard)
+        // Los geométricos (Area, Volume, etc.) SÍ se muestran para que el usuario
+        // pueda agregar notas IA y usarlos en fórmulas.
+        private static readonly HashSet<string> _paramsOcultos = new(StringComparer.OrdinalIgnoreCase)
         {
-            // Built-in que BimSerializer ya maneja
-            "Area", "Volume", "Length", "Width", "Height",
-            // SSA_* compartidos
+            // SSA_* compartidos — ya se leen en RevitExtractionService
             "SSA_GUID_INTEGRACION", "SSA_CODIGO_PARTIDA", "SSA_SUBPARTIDA",
             "SSA_NOMBRE_NORMALIZADO", "SSA_CRITERIO_MEDICION", "SSA_INCLUIR_COMPUTO",
             "SSA_FACTOR_DESPERDICIO", "SSA_ORIGEN_PARTIDA", "SSA_VERSION_EXPORT",
@@ -92,6 +92,14 @@ namespace RvtConstructionOS.Services
             "SSA_CONSIDERAR_RASGO", "SSA_CONSIDERAR_BUNA",
             "SSA_ROUGH_WIDTH", "SSA_ROUGH_HEIGHT", "SSA_DINTEL_TIPO",
             "SSA_JAMBA_TIPO", "SSA_ALFEIZAR_TIPO",
+        };
+
+        // Parámetros geométricos que siempre se exportan pero se muestran
+        // en el wizard para que el usuario agregue notas IA y los use en fórmulas.
+        private static readonly HashSet<string> _paramsGeometricos = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "Area", "Volume", "Length", "Width", "Height", "Perimeter",
+            "Thickness", "Unconnected Height",
         };
 
         /// <summary>
@@ -133,9 +141,12 @@ namespace RvtConstructionOS.Services
 
             if (instancias.Count == 0) return new();
 
-            // Agrupar por familia
-            var grupos = new Dictionary<string, (ElementType? primerTipo,
-                HashSet<string> nombresTipos, int cantInstancias, Element? primerInstancia)>();
+            // Agrupar por familia, recopilando TODOS los tipos e instancias
+            var grupos = new Dictionary<string, (
+                List<ElementType> tipos,
+                HashSet<string> nombresTipos,
+                int cantInstancias,
+                List<Element> instanciasMuestra)>();
 
             foreach (var inst in instancias)
             {
@@ -149,19 +160,24 @@ namespace RvtConstructionOS.Services
                 if (string.IsNullOrWhiteSpace(familia)) continue;
 
                 if (!grupos.ContainsKey(familia))
-                    grupos[familia] = (tipo, new HashSet<string>(), 0, inst);
+                    grupos[familia] = (new List<ElementType>(), new HashSet<string>(), 0, new List<Element>());
 
                 var g = grupos[familia];
-                g.nombresTipos.Add(tipo.Name);
+                if (g.nombresTipos.Add(tipo.Name))
+                {
+                    g.tipos.Add(tipo);
+                    g.instanciasMuestra.Add(inst);
+                }
                 g.cantInstancias++;
-                grupos[familia] = (g.primerTipo, g.nombresTipos, g.cantInstancias, g.primerInstancia);
+                grupos[familia] = (g.tipos, g.nombresTipos, g.cantInstancias, g.instanciasMuestra);
             }
 
             var result = new List<FamiliaEscaneada>();
 
-            foreach (var (familia, (primerTipo, nombresTipos, cantInst, primerInst)) in grupos)
+            foreach (var (familia, (tipos, nombresTipos, cantInst, instMuestra)) in grupos)
             {
-                var parametros = ExtraerParametros(primerTipo!, primerInst);
+                // Escanear parámetros de TODOS los tipos (no solo el primero)
+                var parametros = ExtraerParametrosDeTodosLosTipos(tipos, instMuestra);
 
                 result.Add(new FamiliaEscaneada
                 {
@@ -178,49 +194,67 @@ namespace RvtConstructionOS.Services
         }
 
         /// <summary>
-        /// Extrae los parámetros disponibles de un tipo y una instancia de ejemplo.
-        /// Filtra los parámetros SSA_* que ya se exportan automáticamente.
+        /// Extrae los parámetros disponibles de TODOS los tipos de la familia
+        /// y de instancias de ejemplo. Incluye geométricos (Area, Volume, etc.)
+        /// para notas IA y fórmulas.
         /// </summary>
-        private static List<ParamDisponible> ExtraerParametros(
-            ElementType tipo, Element? instancia)
+        private static List<ParamDisponible> ExtraerParametrosDeTodosLosTipos(
+            List<ElementType> tipos, List<Element> instancias)
         {
             var parametros = new List<ParamDisponible>();
             var nombresVistos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // --- Parámetros del TIPO ---
-            foreach (Parameter p in tipo.Parameters)
+            // --- Parámetros de TODOS los TIPOS ---
+            foreach (var tipo in tipos)
             {
-                if (p.Definition == null) continue;
-                string nombre = p.Definition.Name;
-                if (string.IsNullOrWhiteSpace(nombre)) continue;
-                if (nombresVistos.Contains(nombre)) continue;
-                if (_paramsAutoExport.Contains(nombre)) continue;
+                foreach (Parameter p in tipo.Parameters)
+                {
+                    if (p.Definition == null) continue;
+                    string nombre = p.Definition.Name;
+                    if (string.IsNullOrWhiteSpace(nombre)) continue;
+                    if (nombresVistos.Contains(nombre)) continue;
+                    if (_paramsOcultos.Contains(nombre)) continue;
 
-                nombresVistos.Add(nombre);
-                parametros.Add(CrearParamDisponible(p, "Type"));
+                    nombresVistos.Add(nombre);
+                    var pd = CrearParamDisponible(p, "Type");
+
+                    // Marcar geométricos como siempre exportados
+                    if (_paramsGeometricos.Contains(nombre))
+                        pd.EsBuiltIn = true;
+
+                    parametros.Add(pd);
+                }
             }
 
-            // --- Parámetros de INSTANCIA (si hay) ---
-            if (instancia != null)
+            // --- Parámetros de INSTANCIAS (de todos los tipos) ---
+            foreach (var instancia in instancias)
             {
+                if (instancia == null) continue;
                 foreach (Parameter p in instancia.Parameters)
                 {
                     if (p.Definition == null) continue;
                     string nombre = p.Definition.Name;
                     if (string.IsNullOrWhiteSpace(nombre)) continue;
                     if (nombresVistos.Contains(nombre)) continue;
-                    if (_paramsAutoExport.Contains(nombre)) continue;
+                    if (_paramsOcultos.Contains(nombre)) continue;
 
                     nombresVistos.Add(nombre);
-                    parametros.Add(CrearParamDisponible(p, "Instance"));
+                    var pd = CrearParamDisponible(p, "Instance");
+
+                    if (_paramsGeometricos.Contains(nombre))
+                        pd.EsBuiltIn = true;
+
+                    parametros.Add(pd);
                 }
             }
 
+            // Ordenar: geométricos primero, luego tipo, luego instancia
             return parametros
-                .Where(p => !p.EsSSA)                     // Excluir SSA_* ya exportados
-                .OrderBy(p => p.Origen)                    // Type primero, luego Instance
-                .ThenBy(p => p.Grupo)                      // Agrupar por grupo de Revit
-                .ThenBy(p => p.Nombre)                     // Alfabético dentro del grupo
+                .Where(p => !p.EsSSA)
+                .OrderByDescending(p => _paramsGeometricos.Contains(p.Nombre)) // geométricos primero
+                .ThenBy(p => p.Origen)
+                .ThenBy(p => p.Grupo)
+                .ThenBy(p => p.Nombre)
                 .ToList();
         }
 

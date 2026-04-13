@@ -73,12 +73,8 @@ namespace RvtConstructionOS.Services
         /// Los tipos nuevos reciben reglas vacías (Incluir=true por defecto).
         /// Las reglas existentes se preservan exactamente como estaban.
         /// </summary>
-        /// <param name="doc">Documento Revit activo.</param>
-        /// <param name="reglasExistentes">Conjunto de reglas previas (puede ser null).</param>
-        /// <returns>Nuevo ExportRuleSet con todos los tipos del modelo fusionados.</returns>
         public static ExportRuleSet Escanear(Document doc, ExportRuleSet? reglasExistentes = null)
         {
-            // Índice de reglas existentes por UniqueId del tipo
             var indiceExistente = (reglasExistentes?.Reglas ?? new List<ExportRule>())
                 .ToDictionary(r => r.TypeUniqueId, r => r, StringComparer.OrdinalIgnoreCase);
 
@@ -88,7 +84,6 @@ namespace RvtConstructionOS.Services
             {
                 try
                 {
-                    // Obtener IDs de instancias (elementos no-tipo) de esta categoría
                     var idsInstancias = new FilteredElementCollector(doc)
                         .OfCategory(bic)
                         .WhereElementIsNotElementType()
@@ -96,7 +91,6 @@ namespace RvtConstructionOS.Services
 
                     if (idsInstancias.Count == 0) continue;
 
-                    // Obtener los IDs de tipo únicos usados por esas instancias
                     var tipoIdsUnicos = idsInstancias
                         .Select(id => doc.GetElement(id)?.GetTypeId())
                         .Where(tid => tid != null && tid != ElementId.InvalidElementId)
@@ -108,25 +102,19 @@ namespace RvtConstructionOS.Services
                         if (doc.GetElement(tipoId!) is not ElementType tipo) continue;
 
                         string uid = tipo.UniqueId;
-
-                        // Si ya existe una regla para este tipo, preservarla
-                        // Leer parámetros nativos Revit para seed
                         string keynote = LeerParamTexto(tipo, BuiltInParameter.KEYNOTE_PARAM);
 
                         if (indiceExistente.TryGetValue(uid, out var reglaExistente))
                         {
-                            // Actualizar campos de identificación (por si cambió el nombre)
                             reglaExistente.Categoria  = nombreCat;
                             reglaExistente.Familia    = ObtenerFamilia(tipo);
                             reglaExistente.TipoRevit  = tipo.Name;
-                            // Refrescar KeynoteSeed si cambió en Revit
                             if (!string.IsNullOrWhiteSpace(keynote))
                                 reglaExistente.KeynoteSeed = keynote;
                             reglasFusionadas.Add(reglaExistente);
                         }
                         else
                         {
-                            // Tipo nuevo: crear regla con valores por defecto
                             reglasFusionadas.Add(new ExportRule
                             {
                                 TypeUniqueId      = uid,
@@ -151,7 +139,6 @@ namespace RvtConstructionOS.Services
                 }
             }
 
-            // Ordenar: por categoría, luego familia, luego tipo
             reglasFusionadas.Sort((a, b) =>
             {
                 int c = string.Compare(a.Categoria, b.Categoria, StringComparison.OrdinalIgnoreCase);
@@ -168,6 +155,8 @@ namespace RvtConstructionOS.Services
                 FechaModificacion = DateTime.Now,
                 NombreModelo      = doc.Title,
                 Reglas            = reglasFusionadas,
+                // Preservar perfiles de parámetros custom (wizard)
+                PerfilesParametros = reglasExistentes?.PerfilesParametros ?? new(),
             };
         }
 
@@ -175,10 +164,6 @@ namespace RvtConstructionOS.Services
         // Persistencia por documento
         // -----------------------------------------------------------------------
 
-        /// <summary>
-        /// Carga las reglas guardadas para este documento.
-        /// Retorna un ExportRuleSet vacío si no hay reglas previas.
-        /// </summary>
         public static ExportRuleSet Cargar(Document doc)
         {
             string ruta = GetRulesFilePath(doc);
@@ -197,9 +182,6 @@ namespace RvtConstructionOS.Services
             }
         }
 
-        /// <summary>
-        /// Guarda las reglas del ExportRuleSet en el archivo JSON del documento.
-        /// </summary>
         public static void Guardar(Document doc, ExportRuleSet reglas)
         {
             string ruta = GetRulesFilePath(doc);
@@ -213,9 +195,6 @@ namespace RvtConstructionOS.Services
         // Plantillas reutilizables
         // -----------------------------------------------------------------------
 
-        /// <summary>
-        /// Carga un ExportRuleSet desde un archivo de plantilla externo.
-        /// </summary>
         public static ExportRuleSet CargarPlantilla(string rutaArchivo)
         {
             string json = File.ReadAllText(rutaArchivo, System.Text.Encoding.UTF8);
@@ -223,9 +202,6 @@ namespace RvtConstructionOS.Services
                 ?? new ExportRuleSet();
         }
 
-        /// <summary>
-        /// Guarda el ExportRuleSet actual como plantilla reutilizable.
-        /// </summary>
         public static void GuardarComoPlantilla(ExportRuleSet reglas, string rutaArchivo)
         {
             reglas.FechaModificacion = DateTime.Now;
@@ -233,7 +209,6 @@ namespace RvtConstructionOS.Services
             File.WriteAllText(rutaArchivo, json, System.Text.Encoding.UTF8);
         }
 
-        /// <summary>Retorna el directorio donde se almacenan las plantillas.</summary>
         public static string GetTemplatesDir()
         {
             string dir = Path.Combine(
@@ -247,17 +222,12 @@ namespace RvtConstructionOS.Services
         // Helpers privados
         // -----------------------------------------------------------------------
 
-        /// <summary>
-        /// Obtiene la ruta del archivo JSON de reglas para este documento.
-        /// Usa un hash del path del documento para evitar colisiones de nombre.
-        /// </summary>
         private static string GetRulesFilePath(Document doc)
         {
             string docPath = doc.PathName;
             if (string.IsNullOrEmpty(docPath))
                 docPath = doc.Title;
 
-            // Hash simple del path para nombre de archivo único
             string hash = Math.Abs(docPath.ToLowerInvariant().GetHashCode()).ToString("X8");
             string titulo = Path.GetFileNameWithoutExtension(docPath);
             if (string.IsNullOrEmpty(titulo)) titulo = doc.Title;
@@ -270,18 +240,14 @@ namespace RvtConstructionOS.Services
             return Path.Combine(rulesDir, $"{titulo}_{hash}.json");
         }
 
-        /// <summary>Extrae el nombre de familia del ElementType.</summary>
         private static string ObtenerFamilia(ElementType tipo)
         {
-            // FamilySymbol tiene la propiedad Family.Name
             if (tipo is FamilySymbol fs)
                 return fs.Family?.Name ?? tipo.FamilyName ?? string.Empty;
 
-            // Para tipos de sistema (WallType, FloorType, etc.) usar FamilyName
             return tipo.FamilyName ?? string.Empty;
         }
 
-        /// <summary>Sugiere una unidad de medida según la categoría del elemento.</summary>
         private static string UnidadSugerida(string categoria) => categoria switch
         {
             "Muros"           => "m2",
@@ -297,10 +263,6 @@ namespace RvtConstructionOS.Services
             _                 => "und",
         };
 
-        /// <summary>
-        /// Lee un parámetro nativo de Revit como texto.
-        /// Devuelve string.Empty si el parámetro no existe o está vacío.
-        /// </summary>
         private static string LeerParamTexto(Element elem, BuiltInParameter bip)
         {
             Parameter? p = elem.get_Parameter(bip);
@@ -310,7 +272,6 @@ namespace RvtConstructionOS.Services
             return p.AsValueString() ?? string.Empty;
         }
 
-        /// <summary>Sugiere el criterio de medición según la categoría del elemento.</summary>
         private static string CriterioSugerido(string categoria) => categoria switch
         {
             "Muros"           => "AREA_NETA",

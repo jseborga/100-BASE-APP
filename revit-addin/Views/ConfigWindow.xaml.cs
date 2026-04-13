@@ -1,5 +1,6 @@
 // Views/ConfigWindow.xaml.cs
 // Code-behind para la ventana de configuración de ConstructionOS.
+// Auto-carga proyectos si ya hay credenciales guardadas.
 // Autor: SSA Ingenieria SRL
 
 using System.Windows;
@@ -22,13 +23,35 @@ namespace RvtConstructionOS.Views
             txtUrl.Text = _config.Url;
             txtApiKey.Password = _config.ApiKey;
 
-            if (_config.HasProject)
+            MostrarProyectoActivo();
+        }
+
+        /// <summary>
+        /// Al abrir la ventana, auto-cargar proyectos si ya hay credenciales.
+        /// </summary>
+        private async void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (_config.IsValid)
             {
-                txtEstado.Text = $"Proyecto activo: {_config.ProyectoNombre}";
+                await CargarProyectosAsync();
             }
         }
 
-        private async void BtnCargarProyectos_Click(object sender, RoutedEventArgs e)
+        private void MostrarProyectoActivo()
+        {
+            if (_config.HasProject)
+            {
+                pnlProyectoInfo.Visibility = Visibility.Visible;
+                txtProyectoInfo.Text = _config.ProyectoNombre;
+                txtProyectoDetalle.Text = $"ID: {_config.ProyectoId.Substring(0, 8)}... · Guardado";
+            }
+            else
+            {
+                pnlProyectoInfo.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private async Task CargarProyectosAsync()
         {
             string url = txtUrl.Text.Trim();
             string apiKey = txtApiKey.Password.Trim();
@@ -61,18 +84,23 @@ namespace RvtConstructionOS.Views
                     if (current >= 0) cmbProyectos.SelectedIndex = current;
                 }
 
-                txtEstado.Text = $"{_proyectos.Count} proyecto(s) encontrados.";
+                txtEstado.Text = $"{_proyectos.Count} proyecto(s) activo(s) encontrados.";
                 txtEstado.Foreground = System.Windows.Media.Brushes.Green;
             }
             catch (Exception ex)
             {
-                txtEstado.Text = $"Error: {ex.Message}";
+                txtEstado.Text = $"Error al cargar proyectos: {ex.Message}";
                 txtEstado.Foreground = System.Windows.Media.Brushes.Red;
             }
             finally
             {
                 btnCargarProyectos.IsEnabled = true;
             }
+        }
+
+        private async void BtnCargarProyectos_Click(object sender, RoutedEventArgs e)
+        {
+            await CargarProyectosAsync();
         }
 
         private async void BtnProbar_Click(object sender, RoutedEventArgs e)
@@ -97,7 +125,11 @@ namespace RvtConstructionOS.Views
                 var service = new ConstructionOSService(tempConfig);
                 string resultado = await service.TestConnectionAsync();
 
-                txtEstado.Text = resultado;
+                string proyectoInfo = _config.HasProject
+                    ? $"\nProyecto activo: {_config.ProyectoNombre}"
+                    : "\n⚠ Sin proyecto seleccionado";
+
+                txtEstado.Text = $"✓ {resultado}{proyectoInfo}";
                 txtEstado.Foreground = System.Windows.Media.Brushes.Green;
             }
             catch (Exception ex)
@@ -123,9 +155,10 @@ namespace RvtConstructionOS.Views
             }
 
             _config.Save();
-            txtEstado.Text = "Configuración guardada.";
+
+            MostrarProyectoActivo();
+            txtEstado.Text = "✓ Configuración guardada correctamente.";
             txtEstado.Foreground = System.Windows.Media.Brushes.Green;
-            Close();
         }
 
         private void BtnCancelar_Click(object sender, RoutedEventArgs e)
