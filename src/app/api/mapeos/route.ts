@@ -62,7 +62,8 @@ function evaluateFormula(formula: string, params: Record<string, number>): numbe
 }
 
 // ============================================================
-// GET /api/mapeos — list all mapeos with joins
+// GET /api/mapeos — list mapeos + categories + project BIM elements
+// ?proyecto_id=xxx  → load BIM elements for that project
 // ============================================================
 
 export async function GET(request: NextRequest) {
@@ -75,9 +76,10 @@ export async function GET(request: NextRequest) {
 
     const admin = getAdminClient()
     const { searchParams } = new URL(request.url)
-    const categoriaId = searchParams.get('categoria_id')
+    const proyectoId = searchParams.get('proyecto_id')
 
-    let query = admin
+    // 1. All mapeo rules (global)
+    const { data: mapeos, error } = await admin
       .from('revit_mapeos')
       .select(`
         id, formula, parametro_principal, descripcion, prioridad,
@@ -90,53 +92,76 @@ export async function GET(request: NextRequest) {
       .order('revit_categoria_id')
       .order('prioridad', { ascending: true })
 
-    if (categoriaId) {
-      query = query.eq('revit_categoria_id', categoriaId)
-    }
-
-    const { data: mapeos, error } = await query
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    // Also fetch all categories (for the "add" dropdown)
+    // 2. All Revit categories
     const { data: categorias } = await admin
       .from('revit_categorias')
       .select('id, nombre, nombre_es, parametros_clave')
       .order('nombre')
 
-    // Fetch sample Revit params per category from real bim_elementos
-    const { data: sampleElements } = await admin
-      .from('bim_elementos')
-      .select('revit_categoria_id, familia, tipo, parametros')
-      .not('revit_categoria_id', 'is', null)
-      .limit(500)
+    // 3. Projects list (for selector)
+    const { data: proyectos } = await admin
+      .from('proyectos')
+      .select('id, nombre, estado, tipologia')
+      .order('created_at', { ascending: false })
 
-    // Group samples by category — pick 3 unique familia+tipo combos
-    const samplesByCategory: Record<string, Array<{
-      familia: string
-      tipo: string
+    // 4. If proyecto_id, load its BIM elements + imports
+    let elementos: Array<{
+      id: string
+      revit_id: string | null
+      revit_categoria_id: string | null
+      familia: string | null
+      tipo: string | null
       parametros: Record<string, unknown>
-    }>> = {}
+      partida_id: string | null
+      metrado_calculado: number | null
+      estado: string
+      notas_mapeo: string | null
+      formula_usada: string | null
+      partida_codigo: string | null
+      partida_nombre: string | null
+    }> = []
+    let importaciones: Array<{
+      id: string
+      archivo_nombre: string | null
+      total_elementos: number
+      elementos_mapeados: number
+      estado: string
+      created_at: string
+    }> = []
 
-    for (const el of sampleElements || []) {
-      const catId = el.revit_categoria_id as string
-      if (!samplesByCategory[catId]) samplesByCategory[catId] = []
-      const arr = samplesByCategory[catId]
-      const key = `${el.familia}::${el.tipo}`
-      if (arr.length < 3 && !arr.some(s => `${s.familia}::${s.tipo}` === key)) {
-        arr.push({
-          familia: el.familia || '',
-          tipo: el.tipo || '',
-          parametros: el.parametros as Record<string, unknown>,
-        })
+    if (proyectoId) {
+      // Fetch imports
+      const { data: imps } = await admin
+        .from('bim_importaciones')
+        .select('id, archivo_nombre, total_elementos, elementos_mapeados, estado, created_at')
+        .eq('proyecto_id', proyectoId)
+        .order('created_at', { ascending: false })
+
+      importaciones = (imps || []) as typeof importaciones
+
+      if (importaciones.length > 0) {
+        const importIds = importaciones.map(i => i.id)
+        const { data: elems } = await admin
+          .from('bim_elementos')
+          .select('id, revit_id, revit_categoria_id, familia, tipo, parametros, partida_id, metrado_calculado, estado, notas_mapeo, formula_usada, partida_codigo, partida_nombre')
+          .in('importacion_id', importIds)
+          .order('familia')
+          .order('tipo')
+
+        elementos = (elems || []) as typeof elementos
       }
     }
 
     return NextResponse.json({
       mapeos: mapeos || [],
       categorias: categorias || [],
-      samples: samplesByCategory,
+      proyectos: proyectos || [],
+      importaciones,
+      elementos,
     })
   } catch (err) {
     return NextResponse.json(
