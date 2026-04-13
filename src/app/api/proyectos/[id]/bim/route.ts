@@ -30,12 +30,14 @@ export async function GET(
       .from('bim_elementos')
       .select(`
         id, revit_id, familia, tipo, parametros,
-        metrado_calculado, estado,
+        metrado_calculado, estado, formula_usada, notas_mapeo,
+        partida_codigo, partida_nombre,
         revit_categorias(id, nombre, nombre_es),
         partidas(id, nombre, unidad, capitulo)
       `)
       .eq('importacion_id', latestImportId)
-      .order('revit_id')
+      .order('familia')
+      .order('tipo')
 
     if (elemErr) throw new Error(elemErr.message)
 
@@ -94,6 +96,122 @@ export async function PATCH(
       { error: err instanceof Error ? err.message : 'Error updating element' },
       { status: 500 }
     )
+  }
+}
+
+// PUT /api/proyectos/[id]/bim — Map a group of elements (same familia+tipo) at once
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  await params
+  const admin = getAdmin()
+
+  try {
+    const body = await request.json()
+    const { importacion_id, revit_categoria_id, familia, tipo, partida_id, formula } = body
+
+    if (!importacion_id || !partida_id || !formula) {
+      return NextResponse.json(
+        { error: 'importacion_id, partida_id y formula son requeridos' },
+        { status: 400 }
+      )
+    }
+
+    // Build query for matching elements
+    let query = admin
+      .from('bim_elementos')
+      .select('id, parametros')
+      .eq('importacion_id', importacion_id)
+
+    if (revit_categoria_id) query = query.eq('revit_categoria_id', revit_categoria_id)
+    if (familia) query = query.eq('familia', familia)
+    if (tipo) query = query.eq('tipo', tipo)
+
+    const { data: elements, error: fetchErr } = await query
+    if (fetchErr) throw new Error(fetchErr.message)
+    if (!elements || elements.length === 0) {
+      return NextResponse.json({ error: 'No se encontraron elementos' }, { status: 404 })
+    }
+
+    // Get partida info for write-back fields
+    const { data: partida } = await admin
+      .from('partidas')
+      .select('nombre, unidad')
+      .eq('id', partida_id)
+      .single()
+
+    // Get localización code if available
+    let partidaCodigo: string | null = null
+    if (partida) {
+      const { data: loc } = await admin
+        .from('partida_localizaciones')
+        .select('codigo_local')
+        .eq('partida_id', partida_id)
+        .limit(1)
+        .maybeSingle()
+      if (loc) partidaCodigo = loc.codigo_local
+    }
+
+    // Evaluate formula for each element and update
+    let mapped = 0
+    let errors = 0
+
+    for (const el of elements) {
+      const params = (el.parametros || {}) as Record<string, number>
+      const metrado = evaluateFormula(formula, params)
+
+      if (metrado !== null) {
+        const { error: updateErr } = await admin
+          .from('bim_elementos')
+          .update({
+            partida_id: partida_id,
+            metrado_calculado: Math.round(metrado * 10000) / 10000,
+            formula_usada: formula,
+            estado: 'mapeado',
+            partida_nombre: partida?.nombre || null,
+            partida_codigo: partidaCodigo,
+          })
+          .eq('id', el.id)
+
+        if (updateErr) errors++
+        else mapped++
+      } else {
+        // Formula didn't evaluate — mark as sin_match
+        await admin
+          .from('bim_elementos')
+          .update({ estado: 'sin_match', formula_usada: formula })
+          .eq('id', el.id)
+        errors++
+      }
+    }
+
+    return NextResponse.json({ mapped, errors, total: elements.length })
+  } catch (err) {
+    console.error('BIM PUT error:', err)
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Error mapping group' },
+      { status: 500 }
+    )
+  }
+}
+
+function evaluateFormula(formula: string, params: Record<string, number>): number | null {
+  try {
+    let expr = formula
+    const sortedKeys = Object.keys(params).sort((a, b) => b.length - a.length)
+    for (const key of sortedKeys) {
+      const val = typeof params[key] === 'number' ? params[key] : parseFloat(String(params[key]))
+      if (!isNaN(val)) {
+        expr = expr.replace(new RegExp(`\\b${key}\\b`, 'g'), String(val))
+      }
+    }
+    // Only allow numbers, operators, parentheses, spaces
+    if (/[^0-9+\-*/().eE\s]/.test(expr)) return null
+    const result = Function(`"use strict"; return (${expr})`)()
+    return typeof result === 'number' && isFinite(result) ? result : null
+  } catch {
+    return null
   }
 }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import {
   ArrowLeft, MapPin, Building2, Calendar, Bot, FileSpreadsheet,
   Upload, Trash2, Check, X, Pencil, Plus, ChevronDown, ChevronRight, Download,
   LayoutTemplate, Loader2, Box, RefreshCw, CheckCircle2, AlertCircle, Clock,
-  Search, GitBranch,
+  Search, GitBranch, Calculator, Layers, Save,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -77,8 +77,28 @@ interface BimElement {
   parametros: Record<string, number>
   metrado_calculado: number | null
   estado: string
+  formula_usada: string | null
+  notas_mapeo: string | null
+  partida_codigo: string | null
+  partida_nombre: string | null
   revit_categorias: { id: string; nombre: string; nombre_es: string } | null
   partidas: { id: string; nombre: string; unidad: string; capitulo: string | null } | null
+}
+
+// A group = elements with same categoria + familia + tipo
+interface BimGroup {
+  key: string
+  categoria: string
+  categoriaEs: string
+  categoriaId: string | null
+  familia: string
+  tipo: string
+  elements: BimElement[]
+  sampleParams: Record<string, number>
+  estado: string // dominant estado in the group
+  partida: { id: string; nombre: string; unidad: string } | null
+  formula: string | null
+  metradoTotal: number
 }
 
 interface BimData {
@@ -132,6 +152,17 @@ export default function ProyectoDetailPage() {
   const [bimSearch, setBimSearch] = useState('')
   const [editingBimElement, setEditingBimElement] = useState<string | null>(null)
   const [editBimMetrado, setEditBimMetrado] = useState('')
+
+  // Group mapping state
+  const [mappingGroup, setMappingGroup] = useState<string | null>(null) // group key being mapped
+  const [mapFormula, setMapFormula] = useState('')
+  const [mapPartidaSearch, setMapPartidaSearch] = useState('')
+  const [mapPartidaResults, setMapPartidaResults] = useState<{id:string;nombre:string;unidad:string;capitulo:string|null}[]>([])
+  const [mapSelectedPartida, setMapSelectedPartida] = useState<{id:string;nombre:string;unidad:string}|null>(null)
+  const [mapSearching, setMapSearching] = useState(false)
+  const [mapSaving, setMapSaving] = useState(false)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const mapFormRef = useRef<HTMLDivElement>(null)
 
   const fetchData = useCallback(async () => {
     try {
@@ -201,6 +232,162 @@ export default function ProyectoDetailPage() {
     } catch (err) {
       console.error('BIM update error:', err)
     }
+  }
+
+  // Partida search for group mapping
+  useEffect(() => {
+    if (mapPartidaSearch.length < 2) { setMapPartidaResults([]); return }
+    const t = setTimeout(async () => {
+      setMapSearching(true)
+      try {
+        const res = await fetch('/api/mapeos/partidas?q=' + encodeURIComponent(mapPartidaSearch))
+        if (res.ok) { const d = await res.json(); setMapPartidaResults(d.partidas || []) }
+      } catch { /* */ }
+      finally { setMapSearching(false) }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [mapPartidaSearch])
+
+  // Scroll to mapping form
+  useEffect(() => {
+    if (mappingGroup && mapFormRef.current) {
+      setTimeout(() => mapFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100)
+    }
+  }, [mappingGroup])
+
+  const handleGroupMap = async (group: BimGroup) => {
+    if (!mapSelectedPartida || !mapFormula.trim() || !bimData?.latest_import_id) return
+    setMapSaving(true)
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          importacion_id: bimData.latest_import_id,
+          revit_categoria_id: group.categoriaId,
+          familia: group.familia,
+          tipo: group.tipo,
+          partida_id: mapSelectedPartida.id,
+          formula: mapFormula,
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'Error mapping group')
+      }
+      // Reset form and reload
+      setMappingGroup(null)
+      setMapFormula('')
+      setMapSelectedPartida(null)
+      setMapPartidaSearch('')
+      await fetchBimData()
+    } catch (err) {
+      console.error('Group map error:', err)
+    } finally {
+      setMapSaving(false)
+    }
+  }
+
+  const startMapping = (groupKey: string, group: BimGroup) => {
+    setMappingGroup(groupKey)
+    setMapFormula(group.formula || '')
+    if (group.partida) {
+      setMapSelectedPartida(group.partida)
+      setMapPartidaSearch(group.partida.nombre)
+    } else {
+      setMapSelectedPartida(null)
+      setMapPartidaSearch('')
+    }
+    setMapPartidaResults([])
+  }
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  // Build BIM groups from elements
+  const bimGroups = useMemo((): BimGroup[] => {
+    if (!bimData?.elements) return []
+    const map = new Map<string, BimElement[]>()
+    for (const el of bimData.elements) {
+      const key = `${el.revit_categorias?.nombre || 'Unknown'}::${el.familia}::${el.tipo}`
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(el)
+    }
+    return Array.from(map.entries()).map(([key, elements]) => {
+      const first = elements[0]
+      // Merge all params to show available ones
+      const allParams: Record<string, number> = {}
+      for (const el of elements) {
+        if (el.parametros) {
+          for (const [k, v] of Object.entries(el.parametros)) {
+            if (typeof v === 'number' && !(k in allParams)) allParams[k] = v
+          }
+        }
+      }
+      // Dominant estado
+      const estados = elements.map(e => e.estado)
+      let dominantEstado = 'pendiente'
+      if (estados.every(e => e === 'confirmado')) dominantEstado = 'confirmado'
+      else if (estados.every(e => e === 'mapeado')) dominantEstado = 'mapeado'
+      else if (estados.some(e => e === 'mapeado')) dominantEstado = 'mapeado'
+      else if (estados.some(e => e === 'sin_match')) dominantEstado = 'sin_match'
+
+      const metradoTotal = elements.reduce((s, e) => s + (e.metrado_calculado || 0), 0)
+
+      return {
+        key,
+        categoria: first.revit_categorias?.nombre || 'Unknown',
+        categoriaEs: first.revit_categorias?.nombre_es || first.revit_categorias?.nombre || 'Desconocido',
+        categoriaId: first.revit_categorias?.id || null,
+        familia: first.familia,
+        tipo: first.tipo,
+        elements,
+        sampleParams: allParams,
+        estado: dominantEstado,
+        partida: first.partidas ? { id: first.partidas.id, nombre: first.partidas.nombre, unidad: first.partidas.unidad } : null,
+        formula: first.formula_usada,
+        metradoTotal,
+      }
+    })
+  }, [bimData?.elements])
+
+  // Filter groups
+  const filteredGroups = useMemo(() => {
+    let groups = bimGroups
+    if (bimFilter !== 'all') {
+      groups = groups.filter(g => g.estado === bimFilter)
+    }
+    if (bimSearch) {
+      const s = bimSearch.toLowerCase()
+      groups = groups.filter(g =>
+        g.familia.toLowerCase().includes(s) ||
+        g.tipo.toLowerCase().includes(s) ||
+        g.categoriaEs.toLowerCase().includes(s) ||
+        g.partida?.nombre?.toLowerCase().includes(s)
+      )
+    }
+    return groups
+  }, [bimGroups, bimFilter, bimSearch])
+
+  // Test formula with sample params
+  const testFormula = (formula: string, params: Record<string, number>): string | null => {
+    if (!formula.trim()) return null
+    try {
+      let expr = formula
+      const sortedKeys = Object.keys(params).sort((a, b) => b.length - a.length)
+      for (const k of sortedKeys) {
+        expr = expr.replace(new RegExp(`\\b${k}\\b`, 'g'), String(params[k]))
+      }
+      if (/[^0-9+\-*/().eE\s]/.test(expr)) return 'Error: caracteres no válidos'
+      const r = Function(`"use strict"; return (${expr})`)()
+      return typeof r === 'number' && isFinite(r) ? `= ${r.toFixed(4)}` : 'Error'
+    } catch { return 'Error: fórmula inválida' }
   }
 
   useEffect(() => {
@@ -613,25 +800,18 @@ export default function ProyectoDetailPage() {
       {/* BIM Section */}
       {bimData && bimData.imports.length > 0 && (() => {
         const elements = bimData.elements || []
-        const filtered = elements.filter(el => {
-          if (bimFilter !== 'all' && el.estado !== bimFilter) return false
-          if (bimSearch) {
-            const s = bimSearch.toLowerCase()
-            return (
-              el.tipo.toLowerCase().includes(s) ||
-              el.familia.toLowerCase().includes(s) ||
-              el.revit_categorias?.nombre_es?.toLowerCase().includes(s) ||
-              el.partidas?.nombre?.toLowerCase().includes(s) ||
-              el.revit_id.toLowerCase().includes(s)
-            )
-          }
-          return true
-        })
         const mapeados = elements.filter(e => e.estado === 'mapeado').length
         const confirmados = elements.filter(e => e.estado === 'confirmado').length
         const pendientes = elements.filter(e => e.estado === 'pendiente').length
         const sinMatch = elements.filter(e => e.estado === 'sin_match').length
         const latestImport = bimData.imports[0]
+
+        // Group categories for summary
+        const categoryCounts = new Map<string, number>()
+        for (const g of bimGroups) {
+          const c = g.categoriaEs
+          categoryCounts.set(c, (categoryCounts.get(c) || 0) + g.elements.length)
+        }
 
         return (
           <Card>
@@ -648,19 +828,19 @@ export default function ProyectoDetailPage() {
                   <div>
                     <CardTitle className="text-base">Mapeo BIM</CardTitle>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {latestImport.archivo_nombre} · {elements.length} elementos · {new Date(latestImport.created_at).toLocaleDateString('es-BO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      {latestImport.archivo_nombre} · {elements.length} elementos en {bimGroups.length} grupos · {new Date(latestImport.created_at).toLocaleDateString('es-BO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {mapeados > 0 && (
-                    <Badge variant="outline" className="text-blue-600 bg-blue-50 text-[10px]">
-                      {mapeados} mapeados
-                    </Badge>
-                  )}
                   {confirmados > 0 && (
                     <Badge variant="outline" className="text-green-600 bg-green-50 text-[10px]">
                       {confirmados} confirmados
+                    </Badge>
+                  )}
+                  {mapeados > 0 && (
+                    <Badge variant="outline" className="text-blue-600 bg-blue-50 text-[10px]">
+                      {mapeados} mapeados
                     </Badge>
                   )}
                   {pendientes > 0 && (
@@ -679,51 +859,41 @@ export default function ProyectoDetailPage() {
 
             {bimOpen && (
               <CardContent className="space-y-3">
-                {/* Import history (if multiple) */}
-                {bimData.imports.length > 1 && (
-                  <div className="flex gap-2 flex-wrap text-xs text-muted-foreground">
-                    {bimData.imports.map((imp, i) => (
-                      <span key={imp.id} className={i === 0 ? 'font-medium text-foreground' : ''}>
-                        {imp.archivo_nombre} ({imp.total_elementos} elem, {imp.estado})
-                        {i < bimData.imports.length - 1 && ' · '}
-                      </span>
+                {/* Filter tabs + Actions */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
+                    {[
+                      { key: 'all', label: 'Todos', count: bimGroups.length },
+                      { key: 'pendiente', label: 'Pendientes', count: bimGroups.filter(g => g.estado === 'pendiente').length },
+                      { key: 'mapeado', label: 'Mapeados', count: bimGroups.filter(g => g.estado === 'mapeado').length },
+                      { key: 'confirmado', label: 'Confirmados', count: bimGroups.filter(g => g.estado === 'confirmado').length },
+                      { key: 'sin_match', label: 'Sin match', count: bimGroups.filter(g => g.estado === 'sin_match').length },
+                    ].filter(t => t.key === 'all' || t.count > 0).map(tab => (
+                      <button
+                        key={tab.key}
+                        onClick={() => setBimFilter(tab.key)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                          bimFilter === tab.key
+                            ? 'bg-background shadow-sm text-foreground'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {tab.label} ({tab.count})
+                      </button>
                     ))}
                   </div>
-                )}
 
-                {/* Filters + Actions */}
-                <div className="flex items-center gap-2 flex-wrap">
                   <div className="relative flex-1 max-w-xs">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                     <Input
-                      placeholder="Buscar elemento..."
+                      placeholder="Buscar familia, tipo, partida..."
                       value={bimSearch}
                       onChange={e => setBimSearch(e.target.value)}
                       className="h-8 pl-8 text-xs"
                     />
                   </div>
-                  <select
-                    value={bimFilter}
-                    onChange={e => setBimFilter(e.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  >
-                    <option value="all">Todos ({elements.length})</option>
-                    <option value="mapeado">Mapeados ({mapeados})</option>
-                    <option value="confirmado">Confirmados ({confirmados})</option>
-                    <option value="pendiente">Pendientes ({pendientes})</option>
-                    <option value="sin_match">Sin match ({sinMatch})</option>
-                  </select>
+
                   <div className="ml-auto flex gap-2">
-                    <Link href={`/dashboard/mapeos?proyecto=${proyectoId}`}>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 gap-1.5 text-xs"
-                      >
-                        <GitBranch className="w-3.5 h-3.5" />
-                        Editar Mapeos
-                      </Button>
-                    </Link>
                     <Button
                       variant="outline"
                       size="sm"
@@ -752,138 +922,332 @@ export default function ProyectoDetailPage() {
                   </div>
                 </div>
 
-                {/* Elements table */}
-                <div className="border rounded-lg overflow-hidden">
-                  <div className="grid grid-cols-[140px_1fr_1fr_100px_80px_80px_60px] gap-2 px-3 py-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wider bg-muted/50 border-b">
-                    <span>Categoria Revit</span>
-                    <span>Familia / Tipo</span>
-                    <span>Partida asignada</span>
-                    <span className="text-right">Metrado</span>
-                    <span className="text-center">Unidad</span>
-                    <span className="text-center">Estado</span>
-                    <span></span>
-                  </div>
+                {/* Grouped elements */}
+                <div className="space-y-2">
+                  {filteredGroups.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">
+                      {bimSearch ? 'No se encontraron grupos' : 'No hay elementos en esta importación'}
+                    </div>
+                  ) : (
+                    filteredGroups.map(group => {
+                      const estadoInfo = ESTADO_BIM[group.estado] || ESTADO_BIM.pendiente
+                      const EstadoIcon = estadoInfo.icon
+                      const isExpanded = expandedGroups.has(group.key)
+                      const isMapping = mappingGroup === group.key
+                      const paramKeys = Object.keys(group.sampleParams).filter(k =>
+                        typeof group.sampleParams[k] === 'number' && group.sampleParams[k] > 0
+                      )
 
-                  <div className="max-h-[500px] overflow-y-auto divide-y">
-                    {filtered.length === 0 ? (
-                      <div className="py-8 text-center text-sm text-muted-foreground">
-                        {bimSearch ? 'No se encontraron elementos' : 'No hay elementos en esta importación'}
-                      </div>
-                    ) : (
-                      filtered.map(el => {
-                        const estadoInfo = ESTADO_BIM[el.estado] || ESTADO_BIM.pendiente
-                        const EstadoIcon = estadoInfo.icon
-                        const isEditing = editingBimElement === el.id
-
-                        return (
+                      return (
+                        <div key={group.key} className="border rounded-lg overflow-hidden">
+                          {/* Group header */}
                           <div
-                            key={el.id}
-                            className="group grid grid-cols-[140px_1fr_1fr_100px_80px_80px_60px] gap-2 items-center px-3 py-2 hover:bg-muted/30 transition-colors"
+                            className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors ${
+                              group.estado === 'pendiente' ? 'bg-amber-50/50 hover:bg-amber-50' :
+                              group.estado === 'mapeado' ? 'bg-blue-50/50 hover:bg-blue-50' :
+                              group.estado === 'confirmado' ? 'bg-green-50/50 hover:bg-green-50' :
+                              'bg-red-50/50 hover:bg-red-50'
+                            }`}
                           >
-                            {/* Categoria */}
-                            <span className="text-xs text-muted-foreground truncate" title={el.revit_categorias?.nombre || ''}>
-                              {el.revit_categorias?.nombre_es || el.revit_categorias?.nombre || '—'}
-                            </span>
+                            <button onClick={() => toggleGroup(group.key)} className="flex-shrink-0">
+                              {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+                            </button>
 
-                            {/* Familia / Tipo */}
-                            <div className="min-w-0">
-                              <p className="text-xs font-medium truncate" title={el.tipo}>{el.tipo}</p>
-                              <p className="text-[10px] text-muted-foreground truncate">{el.familia} · {el.revit_id}</p>
-                            </div>
-
-                            {/* Partida asignada */}
-                            <div className="min-w-0">
-                              {el.partidas ? (
-                                <p className="text-xs truncate" title={el.partidas.nombre}>
-                                  {el.partidas.nombre}
-                                </p>
-                              ) : (
-                                <span className="text-xs text-muted-foreground italic">Sin asignar</span>
-                              )}
-                            </div>
-
-                            {/* Metrado */}
-                            <div className="text-right">
-                              {isEditing ? (
-                                <div className="flex items-center gap-0.5 justify-end">
-                                  <Input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={editBimMetrado}
-                                    onChange={e => setEditBimMetrado(e.target.value)}
-                                    onKeyDown={e => {
-                                      if (e.key === 'Enter') handleBimUpdateMetrado(el.id)
-                                      if (e.key === 'Escape') setEditingBimElement(null)
-                                    }}
-                                    className="h-6 w-16 text-[11px] text-right"
-                                    autoFocus
-                                  />
-                                  <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => handleBimUpdateMetrado(el.id)}>
-                                    <Check className="w-2.5 h-2.5 text-green-600" />
-                                  </Button>
-                                  <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setEditingBimElement(null)}>
-                                    <X className="w-2.5 h-2.5" />
-                                  </Button>
+                            <div className="flex-1 min-w-0" onClick={() => toggleGroup(group.key)}>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">{group.categoriaEs}</span>
+                                <span className="text-xs text-muted-foreground">/</span>
+                                <span className="text-sm font-medium truncate">{group.familia}</span>
+                                <span className="text-xs text-muted-foreground">/</span>
+                                <span className="text-sm truncate">{group.tipo}</span>
+                              </div>
+                              {group.partida && (
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-xs text-blue-700">{group.partida.nombre}</span>
+                                  {group.formula && (
+                                    <code className="text-[10px] bg-white/60 px-1.5 py-0.5 rounded font-mono text-muted-foreground">{group.formula}</code>
+                                  )}
                                 </div>
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    setEditingBimElement(el.id)
-                                    setEditBimMetrado((el.metrado_calculado ?? 0).toString())
-                                  }}
-                                  className="text-xs font-mono font-medium hover:text-primary transition-colors inline-flex items-center gap-0.5"
-                                  title="Editar metrado"
-                                >
-                                  {el.metrado_calculado != null ? el.metrado_calculado.toFixed(2) : '—'}
-                                  <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-40" />
-                                </button>
                               )}
                             </div>
 
-                            {/* Unidad */}
-                            <span className="text-[11px] text-center text-muted-foreground">
-                              {el.partidas?.unidad || '—'}
-                            </span>
-
-                            {/* Estado */}
-                            <div className="flex justify-center">
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <Badge variant="outline" className="text-[10px]">
+                                <Layers className="w-3 h-3 mr-1" />
+                                {group.elements.length}
+                              </Badge>
+                              {group.metradoTotal > 0 && (
+                                <span className="text-xs font-mono font-medium">
+                                  {group.metradoTotal.toFixed(2)} {group.partida?.unidad || ''}
+                                </span>
+                              )}
                               <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${estadoInfo.color}`}>
                                 <EstadoIcon className="w-3 h-3" />
                                 {estadoInfo.label}
                               </span>
-                            </div>
 
-                            {/* Actions */}
-                            <div className="flex justify-end">
-                              {el.estado === 'mapeado' && (
+                              {/* Action buttons */}
+                              {group.estado === 'pendiente' || group.estado === 'sin_match' ? (
                                 <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 opacity-0 group-hover:opacity-100 text-green-600"
-                                  onClick={() => handleBimConfirm([el.id])}
-                                  title="Confirmar este elemento"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 gap-1 text-xs"
+                                  onClick={(e) => { e.stopPropagation(); startMapping(group.key, group) }}
                                 >
-                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <Calculator className="w-3 h-3" />
+                                  Mapear
                                 </Button>
-                              )}
+                              ) : group.estado === 'mapeado' ? (
+                                <div className="flex gap-1">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 gap-1 text-xs"
+                                    onClick={(e) => { e.stopPropagation(); startMapping(group.key, group) }}
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                    Editar
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    className="h-7 gap-1 text-xs"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleBimConfirm(group.elements.map(el => el.id))
+                                    }}
+                                    disabled={bimConfirming}
+                                  >
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    Confirmar
+                                  </Button>
+                                </div>
+                              ) : null}
                             </div>
                           </div>
-                        )
-                      })
-                    )}
-                  </div>
+
+                          {/* Inline mapping form */}
+                          {isMapping && (
+                            <div ref={mapFormRef} className="border-t bg-muted/30 p-4 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <h4 className="text-sm font-medium flex items-center gap-2">
+                                  <Calculator className="w-4 h-4 text-indigo-600" />
+                                  Mapear {group.elements.length} elementos: {group.familia} / {group.tipo}
+                                </h4>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setMappingGroup(null)}>
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+
+                              {/* Available parameters */}
+                              {paramKeys.length > 0 && (
+                                <div>
+                                  <p className="text-[11px] text-muted-foreground mb-1.5">Parametros disponibles (click para insertar):</p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {paramKeys.map(k => (
+                                      <button
+                                        key={k}
+                                        onClick={() => setMapFormula(prev => prev ? `${prev} ${k}` : k)}
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-background border text-xs hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
+                                      >
+                                        <span className="font-mono font-medium text-indigo-700">{k}</span>
+                                        <span className="text-muted-foreground">= {group.sampleParams[k]?.toFixed(2)}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Partida search */}
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="relative">
+                                  <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Partida destino</label>
+                                  <div className="relative">
+                                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                                    <Input
+                                      placeholder="Buscar partida..."
+                                      value={mapPartidaSearch}
+                                      onChange={e => {
+                                        setMapPartidaSearch(e.target.value)
+                                        if (mapSelectedPartida && e.target.value !== mapSelectedPartida.nombre) {
+                                          setMapSelectedPartida(null)
+                                        }
+                                      }}
+                                      className="h-8 pl-8 text-xs"
+                                      autoFocus
+                                    />
+                                    {mapSearching && <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+                                  </div>
+                                  {mapPartidaResults.length > 0 && !mapSelectedPartida && (
+                                    <div className="absolute z-10 mt-1 w-full bg-background border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                      {mapPartidaResults.map(p => (
+                                        <button
+                                          key={p.id}
+                                          onClick={() => {
+                                            setMapSelectedPartida({ id: p.id, nombre: p.nombre, unidad: p.unidad })
+                                            setMapPartidaSearch(p.nombre)
+                                            setMapPartidaResults([])
+                                          }}
+                                          className="w-full text-left px-3 py-2 hover:bg-muted transition-colors text-xs"
+                                        >
+                                          <span className="font-medium">{p.nombre}</span>
+                                          <span className="text-muted-foreground ml-2">({p.unidad})</span>
+                                          {p.capitulo && <span className="text-muted-foreground ml-1">· {p.capitulo}</span>}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {mapSelectedPartida && (
+                                    <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      {mapSelectedPartida.nombre} ({mapSelectedPartida.unidad})
+                                    </p>
+                                  )}
+                                </div>
+
+                                {/* Formula */}
+                                <div>
+                                  <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Formula</label>
+                                  <Input
+                                    placeholder="Ej: Area * 1.05, Volume, Count"
+                                    value={mapFormula}
+                                    onChange={e => setMapFormula(e.target.value)}
+                                    className="h-8 text-xs font-mono"
+                                  />
+                                  {mapFormula && (
+                                    <p className={`text-[10px] mt-1 font-mono ${
+                                      testFormula(mapFormula, group.sampleParams)?.startsWith('=')
+                                        ? 'text-green-600'
+                                        : 'text-red-500'
+                                    }`}>
+                                      {testFormula(mapFormula, group.sampleParams) || ''}
+                                      {testFormula(mapFormula, group.sampleParams)?.startsWith('=') && mapSelectedPartida && (
+                                        <span className="text-muted-foreground"> {mapSelectedPartida.unidad} (por elemento)</span>
+                                      )}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Actions */}
+                              <div className="flex items-center justify-between pt-1">
+                                <p className="text-[10px] text-muted-foreground">
+                                  Se aplicara la formula a {group.elements.length} elemento{group.elements.length !== 1 ? 's' : ''} de este grupo
+                                </p>
+                                <div className="flex gap-2">
+                                  <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setMappingGroup(null)}>
+                                    Cancelar
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    className="h-8 gap-1.5 text-xs"
+                                    disabled={!mapSelectedPartida || !mapFormula.trim() || mapSaving || testFormula(mapFormula, group.sampleParams)?.startsWith('Error')}
+                                    onClick={() => handleGroupMap(group)}
+                                  >
+                                    {mapSaving ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Save className="w-3.5 h-3.5" />
+                                    )}
+                                    Mapear {group.elements.length} elementos
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Expanded: show individual elements */}
+                          {isExpanded && (
+                            <div className="border-t">
+                              <div className="grid grid-cols-[1fr_1fr_100px_80px_80px] gap-2 px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider bg-muted/30 border-b">
+                                <span>Revit ID / Tipo</span>
+                                <span>Partida</span>
+                                <span className="text-right">Metrado</span>
+                                <span className="text-center">Unidad</span>
+                                <span className="text-center">Estado</span>
+                              </div>
+                              <div className="max-h-[300px] overflow-y-auto divide-y">
+                                {group.elements.map(el => {
+                                  const elEstado = ESTADO_BIM[el.estado] || ESTADO_BIM.pendiente
+                                  const ElIcon = elEstado.icon
+                                  const isEditing = editingBimElement === el.id
+                                  return (
+                                    <div key={el.id} className="group/el grid grid-cols-[1fr_1fr_100px_80px_80px] gap-2 items-center px-3 py-1.5 hover:bg-muted/20 transition-colors">
+                                      <div className="min-w-0">
+                                        <p className="text-xs truncate">{el.revit_id}</p>
+                                        {Object.keys(el.parametros || {}).length > 0 && (
+                                          <p className="text-[10px] text-muted-foreground truncate">
+                                            {Object.entries(el.parametros)
+                                              .filter(([, v]) => typeof v === 'number' && v > 0)
+                                              .slice(0, 3)
+                                              .map(([k, v]) => `${k}=${(v as number).toFixed(1)}`)
+                                              .join(', ')}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <div className="min-w-0">
+                                        {el.partidas ? (
+                                          <p className="text-xs truncate">{el.partidas.nombre}</p>
+                                        ) : (
+                                          <span className="text-[10px] text-muted-foreground italic">Sin asignar</span>
+                                        )}
+                                      </div>
+                                      <div className="text-right">
+                                        {isEditing ? (
+                                          <div className="flex items-center gap-0.5 justify-end">
+                                            <Input
+                                              type="number" step="0.01" min="0"
+                                              value={editBimMetrado}
+                                              onChange={e => setEditBimMetrado(e.target.value)}
+                                              onKeyDown={e => {
+                                                if (e.key === 'Enter') handleBimUpdateMetrado(el.id)
+                                                if (e.key === 'Escape') setEditingBimElement(null)
+                                              }}
+                                              className="h-5 w-16 text-[10px] text-right"
+                                              autoFocus
+                                            />
+                                            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => handleBimUpdateMetrado(el.id)}>
+                                              <Check className="w-2.5 h-2.5 text-green-600" />
+                                            </Button>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            onClick={() => { setEditingBimElement(el.id); setEditBimMetrado((el.metrado_calculado ?? 0).toString()) }}
+                                            className="text-xs font-mono hover:text-primary transition-colors"
+                                          >
+                                            {el.metrado_calculado != null ? el.metrado_calculado.toFixed(2) : '—'}
+                                          </button>
+                                        )}
+                                      </div>
+                                      <span className="text-[10px] text-center text-muted-foreground">
+                                        {el.partidas?.unidad || '—'}
+                                      </span>
+                                      <div className="flex justify-center">
+                                        <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium ${elEstado.color}`}>
+                                          <ElIcon className="w-2.5 h-2.5" />
+                                          {elEstado.label}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
                 </div>
 
                 {/* Summary */}
                 {elements.length > 0 && (
                   <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
                     <span>
-                      {filtered.length} de {elements.length} elementos
+                      {filteredGroups.length} grupo{filteredGroups.length !== 1 ? 's' : ''} · {filteredGroups.reduce((s, g) => s + g.elements.length, 0)} elementos
                       {bimSearch && ` (filtro: "${bimSearch}")`}
                     </span>
                     <span>
-                      Metrado total: {filtered.reduce((s, e) => s + (e.metrado_calculado || 0), 0).toFixed(2)}
+                      Metrado total: {filteredGroups.reduce((s, g) => s + g.metradoTotal, 0).toFixed(2)}
                     </span>
                   </div>
                 )}
