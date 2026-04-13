@@ -218,10 +218,12 @@ server.tool('import_bim_elements', 'Import BIM elements from Revit into a projec
     archivo_nombre: zod_1.z.string().optional().describe('Source file name (default: "Revit Export")'),
     elementos: zod_1.z.array(zod_1.z.object({
         revit_id: zod_1.z.string().describe('Revit ElementId'),
+        unique_id: zod_1.z.string().optional().describe('Revit UniqueId (GUID)'),
         categoria: zod_1.z.string().describe('Revit category name (Walls, Floors, Structural Columns, etc.)'),
         familia: zod_1.z.string().describe('Revit family name'),
         tipo: zod_1.z.string().describe('Revit type name'),
-        parametros: zod_1.z.record(zod_1.z.string(), zod_1.z.number()).describe('Parameters: { Area, Volume, Length, Height, Width, Count, OpeningsArea, Perimeter, ... }'),
+        parametros: zod_1.z.record(zod_1.z.string(), zod_1.z.number()).describe('Numeric parameters: { Area, AreaBruta, AreaBrutaExt, Volume, Length, Height, Width, Count, OpeningsArea, PesoLinealKgM, ... }'),
+        metadata: zod_1.z.record(zod_1.z.string(), zod_1.z.string()).optional().describe('Text metadata: { Nivel, Funcion, AcabadoInterior, CapasEstructurales, ... }'),
     })).describe('Array of BIM elements to import'),
 }, async (params) => {
     const result = await callWebhook('import_bim_elements', params);
@@ -238,6 +240,82 @@ server.tool('confirm_bim_match', 'Confirm matched BIM elements and create/update
     elemento_ids: zod_1.z.array(zod_1.z.string().uuid()).optional().describe('Optional: confirm only specific element UUIDs (default: all matched)'),
 }, async (params) => {
     const result = await callWebhook('confirm_bim_match', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+// ============================================================
+// TOOLS — BIM Mapping Management (AI agent + web)
+// ============================================================
+server.tool('get_bim_element_detail', 'Get full detail of a single BIM element including all numeric params, metadata, and available mapeos for its category. Use this to understand an element before mapping it.', {
+    elemento_id: zod_1.z.string().uuid().describe('BIM element UUID'),
+}, async (params) => {
+    const result = await callWebhook('get_bim_element_detail', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('create_revit_mapeo', 'Create a new mapping rule: Revit category → partida with formula. Formula uses element param names (Area, Volume, Length, Count, Width, Height, OpeningsArea, AreaBruta, etc.). Example formulas: "(Area - OpeningsArea) * 1.05", "Volume * 78.5", "Count".', {
+    revit_categoria_id: zod_1.z.string().uuid().describe('Revit category UUID'),
+    partida_id: zod_1.z.string().uuid().describe('Target partida UUID from catalog'),
+    formula: zod_1.z.string().describe('Arithmetic formula using param names (e.g., "(Area - OpeningsArea) * 1.05")'),
+    parametro_principal: zod_1.z.string().optional().describe('Main parameter (Area, Volume, Length, Count)'),
+    descripcion: zod_1.z.string().optional().describe('Human description of this rule'),
+    prioridad: zod_1.z.number().optional().describe('Evaluation priority (lower = first, default 10)'),
+}, async (params) => {
+    const result = await callWebhook('create_revit_mapeo', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('update_revit_mapeo', 'Update an existing mapping rule (formula, partida, priority, description).', {
+    mapeo_id: zod_1.z.string().uuid().describe('Mapeo UUID to update'),
+    formula: zod_1.z.string().optional().describe('New formula'),
+    partida_id: zod_1.z.string().uuid().optional().describe('New target partida UUID'),
+    parametro_principal: zod_1.z.string().optional().describe('New main parameter'),
+    descripcion: zod_1.z.string().optional().describe('New description'),
+    prioridad: zod_1.z.number().optional().describe('New priority'),
+}, async (params) => {
+    const result = await callWebhook('update_revit_mapeo', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('delete_revit_mapeo', 'Delete a mapping rule.', {
+    mapeo_id: zod_1.z.string().uuid().describe('Mapeo UUID to delete'),
+}, async (params) => {
+    const result = await callWebhook('delete_revit_mapeo', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('apply_mapping_to_element', 'Manually assign a partida to a BIM element with optional formula evaluation. Used by AI agent to suggest/apply mappings one element at a time.', {
+    elemento_id: zod_1.z.string().uuid().describe('BIM element UUID'),
+    partida_id: zod_1.z.string().uuid().describe('Partida UUID to assign'),
+    formula: zod_1.z.string().optional().describe('Formula to evaluate for metrado (uses element params)'),
+    metrado: zod_1.z.number().optional().describe('Direct metrado value (if not using formula)'),
+}, async (params) => {
+    const result = await callWebhook('apply_mapping_to_element', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('get_element_mappings', 'Get confirmed/mapped element results for Revit write-back. Returns revit_id → partida code + metrado for each mapped element.', {
+    importacion_id: zod_1.z.string().uuid().optional().describe('Filter by import UUID'),
+    proyecto_id: zod_1.z.string().uuid().optional().describe('Filter by project UUID'),
+}, async (params) => {
+    const result = await callWebhook('get_element_mappings', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+// ============================================================
+// TOOLS — BIM Skills (intelligent mapping per country/norm)
+// ============================================================
+server.tool('analyze_bim_import', 'Analyze a BIM import: summarize elements by category, show which have mapeos and which need new rules, identify categories missing mapping rules, show sample params. Returns an actionable report. Use this as the FIRST step when working with a new BIM import.', {
+    importacion_id: zod_1.z.string().uuid().describe('Import UUID to analyze'),
+    pais_codigo: zod_1.z.string().optional().describe('Country code for standard context (BO, PE, BR, US)'),
+}, async (params) => {
+    const result = await callWebhook('analyze_bim_import', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('suggest_element_mapping', 'Get AI-ready mapping suggestions for a specific BIM element. Returns: all numeric params, metadata, existing mapeo rules evaluated against this element, candidate partidas from catalog (filtered by category keywords + country), and suggested formulas. Use this to decide what mapping to create or apply.', {
+    elemento_id: zod_1.z.string().uuid().describe('BIM element UUID to analyze'),
+    pais_codigo: zod_1.z.string().optional().describe('Country code for catalog filtering (default: BO)'),
+}, async (params) => {
+    const result = await callWebhook('suggest_element_mapping', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
+server.tool('get_mapping_coverage', 'Show mapping coverage statistics: categories with/without rules, rules per category, per-country partida coverage, gaps in the mapping standard. Use this to understand what mapping work is still needed and to prioritize rule creation.', {
+    pais_codigo: zod_1.z.string().optional().describe('Country code to check localization coverage (BO, PE, BR, US)'),
+}, async (params) => {
+    const result = await callWebhook('get_mapping_coverage', params);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
 });
 // ============================================================

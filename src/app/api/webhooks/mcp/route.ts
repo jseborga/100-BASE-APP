@@ -114,6 +114,11 @@ const ACTIONS: Record<string, ActionHandler> = {
   delete_revit_mapeo: handleDeleteRevitMapeo,
   apply_mapping_to_element: handleApplyMappingToElement,
   get_element_mappings: handleGetElementMappings,
+
+  // --- BIM Skills (intelligent mapping per country/norm) ---
+  analyze_bim_import: handleAnalyzeBimImport,
+  suggest_element_mapping: handleSuggestElementMapping,
+  get_mapping_coverage: handleGetMappingCoverage,
 }
 
 // Documentation for GET discovery
@@ -253,6 +258,18 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
   get_element_mappings: {
     description: 'Get confirmed/mapped element results for Revit write-back. Returns revit_id → partida code + metrado.',
     params: '{ importacion_id?: string, proyecto_id?: string }',
+  },
+  analyze_bim_import: {
+    description: 'Analyze a BIM import: summarize elements by category, show which have mapeos and which need new rules, compare with country catalog. Returns actionable report for AI agent.',
+    params: '{ importacion_id: string, pais_codigo?: string }',
+  },
+  suggest_element_mapping: {
+    description: 'Get AI-ready mapping suggestions for a BIM element. Returns: element params, matching catalog partidas (by category + country tags), existing mapeo rules, and suggested formulas. The AI agent uses this to decide what mapping to create/apply.',
+    params: '{ elemento_id: string, pais_codigo?: string }',
+  },
+  get_mapping_coverage: {
+    description: 'Show mapping coverage statistics: how many categories have rules, which categories are missing, rules per category, per-country partida coverage. Use to identify gaps in the mapping standard.',
+    params: '{ pais_codigo?: string }',
   },
 }
 
@@ -1622,4 +1639,349 @@ async function handleGetElementMappings(params: Record<string, unknown>) {
   })
 
   return { mappings, count: mappings.length }
+}
+
+// ============================================================
+// BIM Skills — Intelligent mapping analysis per country/norm
+// ============================================================
+
+async function handleAnalyzeBimImport(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const importacion_id = params.importacion_id as string
+  if (!importacion_id) throw new Error('importacion_id is required')
+  const pais_codigo = (params.pais_codigo as string) || null
+
+  // Get import + project info
+  const { data: imp } = await admin
+    .from('bim_importaciones')
+    .select('id, proyecto_id, archivo_nombre, total_elementos, estado, proyectos(nombre, pais_id, tipologia, paises(codigo, nombre))')
+    .eq('id', importacion_id)
+    .single()
+
+  if (!imp) throw new Error('Import not found')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const proyecto = imp.proyectos as any
+  const paisCodigo = pais_codigo || proyecto?.paises?.codigo || 'BO'
+
+  // Get all elements grouped by category
+  const { data: elements } = await admin
+    .from('bim_elementos')
+    .select('id, revit_id, familia, tipo, parametros, estado, metrado_calculado, revit_categorias(id, nombre, nombre_es), partidas(id, nombre, unidad)')
+    .eq('importacion_id', importacion_id)
+
+  // Get existing mapeos
+  const { data: mapeos } = await admin
+    .from('revit_mapeos')
+    .select('id, revit_categoria_id, formula, partidas(nombre, unidad)')
+    .order('prioridad')
+
+  // Get country standard
+  const { data: estandar } = await admin
+    .from('estandares')
+    .select('id, codigo, nombre')
+    .eq('codigo', paisCodigo === 'BO' ? 'NB' : paisCodigo === 'PE' ? 'RNE' : 'NB')
+    .limit(1)
+    .maybeSingle()
+
+  // Build category summary
+  const catSummary: Record<string, {
+    nombre_es: string, total: number, mapeados: number, pendientes: number,
+    sin_match: number, confirmados: number, reglas_existentes: number,
+    tipos_unicos: string[], ejemplo_params: string[]
+  }> = {}
+
+  const mapeoCountByCat = new Map<string, number>()
+  for (const m of mapeos || []) {
+    const cid = m.revit_categoria_id as string
+    mapeoCountByCat.set(cid, (mapeoCountByCat.get(cid) || 0) + 1)
+  }
+
+  for (const el of elements || []) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cat = el.revit_categorias as any
+    const catName = cat?.nombre || 'Sin categoría'
+    const catEs = cat?.nombre_es || catName
+    const catId = cat?.id || 'none'
+
+    if (!catSummary[catName]) {
+      catSummary[catName] = {
+        nombre_es: catEs, total: 0, mapeados: 0, pendientes: 0,
+        sin_match: 0, confirmados: 0,
+        reglas_existentes: mapeoCountByCat.get(catId) || 0,
+        tipos_unicos: [], ejemplo_params: [],
+      }
+    }
+
+    const s = catSummary[catName]
+    s.total++
+    if (el.estado === 'mapeado') s.mapeados++
+    else if (el.estado === 'pendiente') s.pendientes++
+    else if (el.estado === 'error' || el.estado === 'sin_match') s.sin_match++
+    else if (el.estado === 'confirmado' || el.estado === 'revisado') s.confirmados++
+
+    const tipoKey = `${el.familia} / ${el.tipo}`
+    if (!s.tipos_unicos.includes(tipoKey)) s.tipos_unicos.push(tipoKey)
+
+    // Show sample params for first element of each category
+    if (s.ejemplo_params.length === 0) {
+      const raw = (el.parametros || {}) as Record<string, unknown>
+      const numParams = Object.entries(raw)
+        .filter(([k, v]) => !k.startsWith('_') && typeof v === 'number' && (v as number) > 0)
+        .map(([k, v]) => `${k}=${(v as number).toFixed(2)}`)
+      s.ejemplo_params = numParams.slice(0, 8)
+    }
+  }
+
+  // Categories missing rules
+  const catsMissingRules = Object.entries(catSummary)
+    .filter(([, s]) => s.reglas_existentes === 0 && s.total > 0)
+    .map(([name, s]) => ({ categoria: name, nombre_es: s.nombre_es, elementos: s.total }))
+
+  return {
+    proyecto: {
+      nombre: proyecto?.nombre,
+      pais: proyecto?.paises?.nombre,
+      pais_codigo: paisCodigo,
+      tipologia: proyecto?.tipologia,
+      estandar: estandar?.nombre || null,
+    },
+    archivo: imp.archivo_nombre,
+    estado_import: imp.estado,
+    resumen: {
+      total_elementos: (elements || []).length,
+      categorias: Object.keys(catSummary).length,
+      mapeados: (elements || []).filter(e => e.estado === 'mapeado').length,
+      confirmados: (elements || []).filter(e => e.estado === 'confirmado' || e.estado === 'revisado').length,
+      pendientes: (elements || []).filter(e => e.estado === 'pendiente').length,
+      sin_match: (elements || []).filter(e => e.estado === 'error' || e.estado === 'sin_match').length,
+    },
+    por_categoria: catSummary,
+    categorias_sin_reglas: catsMissingRules,
+    total_reglas_mapeo: (mapeos || []).length,
+    instruccion: `Analiza este import y sugiere acciones. Para categorias sin reglas, usa suggest_element_mapping con un elemento de ejemplo. Para crear reglas nuevas, usa create_revit_mapeo. Para aplicar mapeos existentes, usa match_bim_elements.`,
+  }
+}
+
+async function handleSuggestElementMapping(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const elemento_id = params.elemento_id as string
+  if (!elemento_id) throw new Error('elemento_id is required')
+  const pais_codigo = (params.pais_codigo as string) || 'BO'
+
+  // Get element detail
+  const { data: elem, error } = await admin
+    .from('bim_elementos')
+    .select(`
+      id, revit_id, familia, tipo, parametros, estado, metrado_calculado,
+      revit_categorias(id, nombre, nombre_es, parametros_clave),
+      partidas(id, nombre, unidad),
+      bim_importaciones(proyecto_id, proyectos(pais_id, paises(codigo)))
+    `)
+    .eq('id', elemento_id)
+    .single()
+
+  if (error) throw new Error(error.message)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cat = elem.revit_categorias as any
+  const catId = cat?.id
+  const catNombre = cat?.nombre_es || cat?.nombre || 'Desconocida'
+
+  // Extract numeric params and metadata
+  const rawParams = (elem.parametros || {}) as Record<string, unknown>
+  const numericParams: Record<string, number> = {}
+  const metadata: Record<string, string> = {}
+  for (const [k, v] of Object.entries(rawParams)) {
+    if (k === '_metadata' && typeof v === 'object' && v !== null) {
+      Object.assign(metadata, v)
+    } else if (k === '_unique_id') {
+      // skip
+    } else if (typeof v === 'number' && v > 0) {
+      numericParams[k] = Math.round(v * 10000) / 10000
+    }
+  }
+
+  // Get existing mapeos for this category
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let existingMapeos: any[] = []
+  if (catId) {
+    const { data: mapeos } = await admin
+      .from('revit_mapeos')
+      .select('id, formula, prioridad, descripcion, partidas(nombre, unidad)')
+      .eq('revit_categoria_id', catId)
+      .order('prioridad')
+    existingMapeos = mapeos || []
+  }
+
+  // Evaluate existing formulas against this element's params
+  const evaluatedMapeos = existingMapeos.map(m => {
+    const result = evaluateFormula(m.formula, numericParams)
+    return {
+      mapeo_id: m.id,
+      formula: m.formula,
+      prioridad: m.prioridad,
+      descripcion: m.descripcion,
+      partida: m.partidas,
+      resultado: result,
+      aplica: result !== null && result > 0,
+    }
+  })
+
+  // Resolve estandar for this country
+  const estandarMap: Record<string, string> = { BO: 'NB', PE: 'RNE', BR: 'ABNT', US: 'CSI', AR: 'CIRSOC', CL: 'NCh' }
+  const estandarCode = estandarMap[pais_codigo] || 'NB'
+
+  // Search catalog for partidas that could match this category
+  // Use tags to find relevant partidas
+  const { data: candidatePartidas } = await admin
+    .from('partidas')
+    .select(`
+      id, nombre, unidad, capitulo, descripcion,
+      partida_localizaciones!inner(codigo_local, referencia_norma, estandares!inner(codigo))
+    `)
+    .eq('partida_localizaciones.estandares.codigo', estandarCode)
+    .order('capitulo')
+    .limit(30)
+
+  // Filter candidates by category relevance (heuristic: match chapter keywords)
+  const catKeywords: Record<string, string[]> = {
+    Walls: ['muro', 'ladrillo', 'revoque', 'enlucido', 'pintura', 'tabique', 'tarrajeo'],
+    'Structural Columns': ['columna', 'hormigón', 'encofrado', 'acero', 'refuerzo'],
+    'Structural Framing': ['viga', 'hormigón', 'encofrado', 'acero', 'cercha'],
+    Floors: ['losa', 'piso', 'contrapiso', 'cerámico', 'impermeabilización', 'alivianada'],
+    Ceilings: ['cielo', 'enlucido', 'yeso', 'pintura'],
+    Roofs: ['cubierta', 'impermeabilización', 'calamina', 'teja'],
+    Doors: ['puerta', 'marco', 'madera', 'metálica'],
+    Windows: ['ventana', 'vidrio', 'aluminio', 'cristal'],
+    Stairs: ['escalera', 'pasamano', 'hormigón'],
+    Railings: ['baranda', 'pasamano', 'metálica'],
+    'Plumbing Fixtures': ['inodoro', 'lavamano', 'ducha', 'sanitario', 'grifo'],
+    'Electrical Fixtures': ['iluminación', 'tomacorriente', 'tablero', 'eléctric'],
+  }
+  const keywords = catKeywords[cat?.nombre || ''] || []
+  const relevantPartidas = (candidatePartidas || []).filter(p => {
+    const text = `${p.nombre} ${p.capitulo || ''} ${p.descripcion || ''}`.toLowerCase()
+    return keywords.some(kw => text.includes(kw))
+  }).slice(0, 15)
+
+  // Suggest formulas based on element params and metadata
+  const suggestedFormulas: string[] = []
+  if (numericParams.Area > 0 && numericParams.OpeningsArea >= 0) {
+    suggestedFormulas.push('Area - OpeningsArea')
+    suggestedFormulas.push('(Area - OpeningsArea) * 1.05')
+  }
+  if (numericParams.Area > 0) suggestedFormulas.push('Area')
+  if (numericParams.Volume > 0) {
+    suggestedFormulas.push('Volume')
+    suggestedFormulas.push('Volume * 78.5')
+  }
+  if (numericParams.Length > 0) suggestedFormulas.push('Length')
+  if (numericParams.Count > 0) suggestedFormulas.push('Count')
+  if (numericParams.Width > 0 && numericParams.Height > 0 && numericParams.Length > 0) {
+    suggestedFormulas.push('(Width + Height * 2) * Length')
+  }
+
+  return {
+    elemento: {
+      id: elem.id,
+      revit_id: elem.revit_id,
+      familia: elem.familia,
+      tipo: elem.tipo,
+      categoria: catNombre,
+      categoria_revit: cat?.nombre,
+      revit_categoria_id: catId,
+      estado: elem.estado,
+    },
+    parametros_numericos: numericParams,
+    metadata,
+    mapeos_existentes: evaluatedMapeos,
+    partidas_candidatas: relevantPartidas.map(p => ({
+      id: p.id,
+      nombre: p.nombre,
+      unidad: p.unidad,
+      capitulo: p.capitulo,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      codigo_local: (p.partida_localizaciones as any)?.[0]?.codigo_local,
+    })),
+    formulas_sugeridas: suggestedFormulas,
+    pais_codigo: pais_codigo,
+    estandar: estandarCode,
+    instruccion: `Analiza los parametros del elemento y los mapeos existentes. Si faltan mapeos, usa create_revit_mapeo con la formula apropiada y la partida candidata. Si el mapeo existe pero no aplica, revisa la formula. Para aplicar directamente, usa apply_mapping_to_element.`,
+  }
+}
+
+async function handleGetMappingCoverage(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const pais_codigo = (params.pais_codigo as string) || null
+
+  // Get all categories
+  const { data: categorias } = await admin
+    .from('revit_categorias')
+    .select('id, nombre, nombre_es')
+
+  // Get all mapeos with partida info
+  const { data: mapeos } = await admin
+    .from('revit_mapeos')
+    .select('id, revit_categoria_id, formula, parametro_principal, prioridad, descripcion, partidas(id, nombre, unidad, capitulo)')
+    .order('revit_categoria_id')
+    .order('prioridad')
+
+  // Get country-specific localization count
+  let locCount = 0
+  if (pais_codigo) {
+    const estandarMap: Record<string, string> = { BO: 'NB', PE: 'RNE', BR: 'ABNT', US: 'CSI' }
+    const estCode = estandarMap[pais_codigo]
+    if (estCode) {
+      const { count } = await admin
+        .from('partida_localizaciones')
+        .select('id', { count: 'exact', head: true })
+        .eq('estandares.codigo', estCode)
+      locCount = count || 0
+    }
+  }
+
+  // Build coverage per category
+  const coverage = (categorias || []).map(cat => {
+    const catMapeos = (mapeos || []).filter(m => m.revit_categoria_id === cat.id)
+    return {
+      categoria: cat.nombre,
+      nombre_es: cat.nombre_es,
+      reglas: catMapeos.length,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      partidas: catMapeos.map(m => ({
+        formula: m.formula,
+        prioridad: m.prioridad,
+        descripcion: m.descripcion,
+        partida: (m.partidas as any)?.nombre,
+        unidad: (m.partidas as any)?.unidad,
+      })),
+      tiene_cobertura: catMapeos.length > 0,
+    }
+  })
+
+  const conCobertura = coverage.filter(c => c.tiene_cobertura).length
+  const sinCobertura = coverage.filter(c => !c.tiene_cobertura)
+
+  // Get total catalog partidas
+  const { count: totalPartidas } = await admin
+    .from('partidas')
+    .select('id', { count: 'exact', head: true })
+
+  return {
+    resumen: {
+      categorias_total: (categorias || []).length,
+      categorias_con_reglas: conCobertura,
+      categorias_sin_reglas: sinCobertura.length,
+      total_reglas: (mapeos || []).length,
+      total_partidas_catalogo: totalPartidas || 0,
+      localizaciones_pais: locCount,
+    },
+    cobertura_por_categoria: coverage,
+    categorias_sin_cobertura: sinCobertura.map(c => ({
+      categoria: c.categoria,
+      nombre_es: c.nombre_es,
+    })),
+    pais_codigo: pais_codigo,
+    instruccion: `Usa esta información para identificar gaps en el estándar de mapeo. Para categorías sin cobertura, analiza elementos de ejemplo con suggest_element_mapping y crea reglas con create_revit_mapeo.`,
+  }
 }
