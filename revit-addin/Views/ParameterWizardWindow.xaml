@@ -1,0 +1,411 @@
+<Window x:Class="RvtConstructionOS.Views.ParameterWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ConstructionOS — Configurar Parámetros de Exportación"
+        Width="1050" Height="700"
+        MinWidth="850" MinHeight="550"
+        WindowStartupLocation="CenterScreen"
+        Background="#F5F5F5"
+        Loaded="Window_Loaded">
+
+    <Window.Resources>
+        <!-- Encabezado de sección -->
+        <Style x:Key="SeccionHeader" TargetType="Border">
+            <Setter Property="Background"  Value="#1F4E79"/>
+            <Setter Property="Padding"     Value="10,5"/>
+            <Setter Property="Margin"      Value="0,8,0,4"/>
+        </Style>
+        <Style x:Key="SeccionTxt" TargetType="TextBlock">
+            <Setter Property="Foreground"  Value="White"/>
+            <Setter Property="FontWeight"  Value="Bold"/>
+            <Setter Property="FontSize"    Value="11.5"/>
+        </Style>
+
+        <!-- Etiqueta info -->
+        <Style x:Key="LblInfo" TargetType="TextBlock">
+            <Setter Property="Foreground"  Value="#546E7A"/>
+            <Setter Property="FontSize"    Value="11"/>
+            <Setter Property="Margin"      Value="0,0,0,2"/>
+        </Style>
+
+        <!-- Campo de texto -->
+        <Style x:Key="CampoTexto" TargetType="TextBox">
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="Padding"         Value="5,3"/>
+            <Setter Property="BorderBrush"     Value="#B0BEC5"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+
+        <!-- Botón estándar -->
+        <Style x:Key="BtnStd" TargetType="Button">
+            <Setter Property="FontSize"     Value="12"/>
+            <Setter Property="Padding"      Value="12,5"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+            <Setter Property="Background"   Value="#E3F2FD"/>
+            <Setter Property="BorderBrush"  Value="#90CAF9"/>
+        </Style>
+
+        <!-- Botón primario -->
+        <Style x:Key="BtnPrimario" TargetType="Button">
+            <Setter Property="FontSize"     Value="12"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="Padding"      Value="16,6"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+            <Setter Property="Background"   Value="#1565C0"/>
+            <Setter Property="Foreground"   Value="White"/>
+            <Setter Property="BorderBrush"  Value="#0D47A1"/>
+        </Style>
+
+        <!-- Botón peligro (rojo) -->
+        <Style x:Key="BtnDanger" TargetType="Button">
+            <Setter Property="FontSize"     Value="11"/>
+            <Setter Property="Padding"      Value="8,3"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+            <Setter Property="Background"   Value="#FFEBEE"/>
+            <Setter Property="Foreground"   Value="#C62828"/>
+            <Setter Property="BorderBrush"  Value="#EF9A9A"/>
+        </Style>
+
+        <!-- Badge de conteo -->
+        <Style x:Key="Badge" TargetType="Border">
+            <Setter Property="Background"      Value="#E3F2FD"/>
+            <Setter Property="CornerRadius"     Value="8"/>
+            <Setter Property="Padding"          Value="6,1"/>
+            <Setter Property="Margin"           Value="6,0,0,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="280" MinWidth="200"/>
+            <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ================================================================ -->
+        <!-- PANEL IZQUIERDO: Lista de familias                               -->
+        <!-- ================================================================ -->
+        <Border Grid.Column="0" Grid.Row="0" Background="White"
+                BorderBrush="#CFD8DC" BorderThickness="1" CornerRadius="4">
+            <DockPanel>
+                <!-- Título -->
+                <Border DockPanel.Dock="Top" Background="#1F4E79" Padding="10,8"
+                        CornerRadius="4,4,0,0">
+                    <TextBlock Text="Familias del modelo" Foreground="White"
+                               FontWeight="Bold" FontSize="13"/>
+                </Border>
+
+                <!-- Filtro de búsqueda -->
+                <Border DockPanel.Dock="Top" Padding="8,6">
+                    <TextBox x:Name="txtBuscarFamilia" Style="{StaticResource CampoTexto}"
+                             TextChanged="TxtBuscarFamilia_TextChanged">
+                        <TextBox.Tag>Buscar familia...</TextBox.Tag>
+                    </TextBox>
+                </Border>
+
+                <!-- Info de escaneo -->
+                <TextBlock x:Name="lblInfoEscaneo" DockPanel.Dock="Top"
+                           Style="{StaticResource LblInfo}" Margin="10,0,10,4"
+                           Text="Escaneando modelo..."/>
+
+                <!-- TreeView de familias -->
+                <TreeView x:Name="treeFamilias" Margin="4" BorderThickness="0"
+                          SelectedItemChanged="TreeFamilias_SelectedItemChanged">
+                    <TreeView.ItemContainerStyle>
+                        <Style TargetType="TreeViewItem">
+                            <Setter Property="IsExpanded" Value="True"/>
+                            <Setter Property="Padding" Value="2"/>
+                        </Style>
+                    </TreeView.ItemContainerStyle>
+                </TreeView>
+            </DockPanel>
+        </Border>
+
+        <!-- Splitter -->
+        <GridSplitter Grid.Column="1" Grid.Row="0" Width="5"
+                      HorizontalAlignment="Stretch" Background="Transparent"/>
+
+        <!-- ================================================================ -->
+        <!-- PANEL DERECHO: Configuración de la familia seleccionada          -->
+        <!-- ================================================================ -->
+        <Border Grid.Column="2" Grid.Row="0" Background="White"
+                BorderBrush="#CFD8DC" BorderThickness="1" CornerRadius="4">
+            <DockPanel>
+                <!-- Título familia -->
+                <Border DockPanel.Dock="Top" Background="#1F4E79" Padding="10,8"
+                        CornerRadius="4,4,0,0">
+                    <TextBlock x:Name="lblFamiliaSeleccionada"
+                               Text="Seleccione una familia" Foreground="White"
+                               FontWeight="Bold" FontSize="13"/>
+                </Border>
+
+                <!-- Contenido (scroll vertical) -->
+                <ScrollViewer DockPanel.Dock="Top" VerticalScrollBarVisibility="Auto"
+                              Padding="10,4,10,10">
+                    <StackPanel x:Name="panelContenido" Visibility="Collapsed">
+
+                        <!-- ====== SECCIÓN 1: Nota general para la IA ====== -->
+                        <Border Style="{StaticResource SeccionHeader}">
+                            <TextBlock Style="{StaticResource SeccionTxt}"
+                                       Text="Nota general para la IA"/>
+                        </Border>
+                        <TextBlock Style="{StaticResource LblInfo}" TextWrapping="Wrap"
+                                   Text="Describe esta familia para que la IA entienda su contexto constructivo."/>
+                        <TextBox x:Name="txtNotaGeneralIA" Style="{StaticResource CampoTexto}"
+                                 Height="60" AcceptsReturn="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 TextChanged="NotaGeneralIA_Changed"/>
+
+                        <!-- ====== SECCIÓN 2: Parámetros directos ====== -->
+                        <Border Style="{StaticResource SeccionHeader}">
+                            <DockPanel>
+                                <TextBlock Style="{StaticResource SeccionTxt}"
+                                           Text="Parámetros a exportar"/>
+                                <Border Style="{StaticResource Badge}" DockPanel.Dock="Right">
+                                    <TextBlock x:Name="lblConteoParams" FontSize="10"
+                                               Foreground="#1565C0" FontWeight="SemiBold"/>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                        <TextBlock Style="{StaticResource LblInfo}" TextWrapping="Wrap"
+                                   Text="Seleccione los parámetros del tipo/instancia que desea enviar al servidor. Agregue notas para que la IA entienda cada parámetro."/>
+
+                        <!-- DataGrid de parámetros -->
+                        <DataGrid x:Name="gridParametros" AutoGenerateColumns="False"
+                                  CanUserAddRows="False" CanUserDeleteRows="False"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  BorderBrush="#E0E0E0" BorderThickness="1"
+                                  RowHeight="28" MaxHeight="250"
+                                  SelectionMode="Single" SelectionUnit="FullRow"
+                                  CellEditEnding="GridParametros_CellEditEnding">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="" Width="30"
+                                    Binding="{Binding Seleccionado, UpdateSourceTrigger=PropertyChanged}"/>
+                                <DataGridTextColumn Header="Parámetro" Width="140"
+                                    Binding="{Binding Nombre}" IsReadOnly="True">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="FontWeight" Value="SemiBold"/>
+                                            <Setter Property="Padding" Value="4,0"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn Header="Tipo" Width="60"
+                                    Binding="{Binding TipoDato}" IsReadOnly="True">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#78909C"/>
+                                            <Setter Property="FontSize" Value="10"/>
+                                            <Setter Property="Padding" Value="4,0"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn Header="Origen" Width="60"
+                                    Binding="{Binding Origen}" IsReadOnly="True">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#78909C"/>
+                                            <Setter Property="FontSize" Value="10"/>
+                                            <Setter Property="Padding" Value="4,0"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn Header="Valor ejemplo" Width="100"
+                                    Binding="{Binding ValorEjemplo}" IsReadOnly="True">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#1565C0"/>
+                                            <Setter Property="FontFamily" Value="Consolas"/>
+                                            <Setter Property="FontSize" Value="11"/>
+                                            <Setter Property="Padding" Value="4,0"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn Header="Nota para la IA" Width="*"
+                                    Binding="{Binding NotaIA, UpdateSourceTrigger=LostFocus}">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#37474F"/>
+                                            <Setter Property="FontSize" Value="11"/>
+                                            <Setter Property="Padding" Value="4,0"/>
+                                            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                    <DataGridTextColumn.EditingElementStyle>
+                                        <Style TargetType="TextBox">
+                                            <Setter Property="FontSize" Value="11"/>
+                                            <Setter Property="Padding" Value="2"/>
+                                        </Style>
+                                    </DataGridTextColumn.EditingElementStyle>
+                                </DataGridTextColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- ====== SECCIÓN 3: Parámetros calculados (fórmulas) ====== -->
+                        <Border Style="{StaticResource SeccionHeader}">
+                            <DockPanel>
+                                <TextBlock Style="{StaticResource SeccionTxt}"
+                                           Text="Parámetros calculados (fórmulas)"/>
+                                <Border Style="{StaticResource Badge}" DockPanel.Dock="Right">
+                                    <TextBlock x:Name="lblConteoFormulas" FontSize="10"
+                                               Foreground="#1565C0" FontWeight="SemiBold"/>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                        <TextBlock Style="{StaticResource LblInfo}" TextWrapping="Wrap" Margin="0,0,0,6"
+                                   Text="Cree parámetros virtuales que combinan valores del modelo con fórmulas. Use {NombreParam} para referenciar parámetros. Ejemplos: {Width} + 0.30 | {Area} * {Espesor} | ({Height} - 0.10) * 2"/>
+
+                        <!-- Lista de fórmulas existentes -->
+                        <ItemsControl x:Name="listaFormulas">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="#E0E0E0" BorderThickness="1"
+                                            CornerRadius="4" Margin="0,0,0,6" Padding="8,6">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="90"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Nombre -->
+                                            <TextBlock Grid.Row="0" Grid.Column="0"
+                                                       Text="Nombre:" Style="{StaticResource LblInfo}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBox Grid.Row="0" Grid.Column="1"
+                                                     Text="{Binding Nombre, UpdateSourceTrigger=LostFocus}"
+                                                     Style="{StaticResource CampoTexto}" Margin="0,0,0,4"
+                                                     Tag="Ej: AnchoDintel"/>
+
+                                            <!-- Botón eliminar -->
+                                            <Button Grid.Row="0" Grid.Column="2"
+                                                    Content="X" Style="{StaticResource BtnDanger}"
+                                                    Width="28" Height="24" Margin="6,0,0,0"
+                                                    Click="BtnEliminarFormula_Click"
+                                                    Tag="{Binding}"/>
+
+                                            <!-- Fórmula -->
+                                            <TextBlock Grid.Row="1" Grid.Column="0"
+                                                       Text="Fórmula:" Style="{StaticResource LblInfo}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2"
+                                                     Text="{Binding Formula, UpdateSourceTrigger=LostFocus}"
+                                                     Style="{StaticResource CampoTexto}" Margin="0,0,0,4"
+                                                     FontFamily="Consolas"
+                                                     Tag="Ej: {Width} + 0.30"
+                                                     LostFocus="FormulaField_LostFocus"/>
+
+                                            <!-- Unidad -->
+                                            <TextBlock Grid.Row="2" Grid.Column="0"
+                                                       Text="Unidad:" Style="{StaticResource LblInfo}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2"
+                                                     Text="{Binding Unidad, UpdateSourceTrigger=LostFocus}"
+                                                     Style="{StaticResource CampoTexto}" Margin="0,0,0,4"
+                                                     Width="80" HorizontalAlignment="Left"
+                                                     Tag="m, m2, m3, kg, und"/>
+
+                                            <!-- Nota IA -->
+                                            <TextBlock Grid.Row="3" Grid.Column="0"
+                                                       Text="Nota IA:" Style="{StaticResource LblInfo}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2"
+                                                     Text="{Binding NotaIA, UpdateSourceTrigger=LostFocus}"
+                                                     Style="{StaticResource CampoTexto}"
+                                                     Tag="Describe para qué partida sirve este cálculo"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Botón agregar fórmula -->
+                        <Button x:Name="btnAgregarFormula" Style="{StaticResource BtnStd}"
+                                HorizontalAlignment="Left" Margin="0,4,0,0"
+                                Click="BtnAgregarFormula_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="+" FontSize="16" FontWeight="Bold"
+                                           Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="Agregar fórmula" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+
+                        <!-- ====== SECCIÓN 4: Variables disponibles ====== -->
+                        <Border Style="{StaticResource SeccionHeader}">
+                            <TextBlock Style="{StaticResource SeccionTxt}"
+                                       Text="Variables disponibles para fórmulas"/>
+                        </Border>
+                        <TextBlock Style="{StaticResource LblInfo}" TextWrapping="Wrap" Margin="0,0,0,4"
+                                   Text="Use estos nombres entre llaves {Nombre} en sus fórmulas. Los valores estándar siempre están disponibles."/>
+
+                        <!-- Variables estándar -->
+                        <Border Background="#ECEFF1" CornerRadius="4" Padding="10,6" Margin="0,0,0,4">
+                            <TextBlock FontFamily="Consolas" FontSize="10.5" TextWrapping="Wrap"
+                                       Foreground="#37474F">
+                                <Run FontWeight="Bold">Estándar: </Run>
+                                <Run>{Area}  {Volume}  {Length}  {Height}  {Width}  {Count}  {Espesor}  {AreaNetaInt}  {AreaNetaExt}  {AreaBrutaInt}  {AreaBrutaExt}  {OpeningsArea}  {PesoTotalKg}</Run>
+                            </TextBlock>
+                        </Border>
+
+                        <!-- Variables custom (de los parámetros seleccionados) -->
+                        <Border Background="#E8F5E9" CornerRadius="4" Padding="10,6" Margin="0,0,0,4">
+                            <TextBlock x:Name="lblVariablesCustom" FontFamily="Consolas"
+                                       FontSize="10.5" TextWrapping="Wrap" Foreground="#2E7D32">
+                                <Run FontWeight="Bold">Del tipo: </Run>
+                                <Run>(seleccione parámetros arriba)</Run>
+                            </TextBlock>
+                        </Border>
+
+                        <!-- ====== SECCIÓN 5: Preview del JSON ====== -->
+                        <Border Style="{StaticResource SeccionHeader}">
+                            <TextBlock Style="{StaticResource SeccionTxt}"
+                                       Text="Preview del JSON exportado"/>
+                        </Border>
+                        <Border Background="#263238" CornerRadius="4" Padding="10,8"
+                                MaxHeight="160">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <TextBlock x:Name="lblPreviewJson" FontFamily="Consolas"
+                                           FontSize="10.5" Foreground="#A5D6A7" TextWrapping="Wrap"/>
+                            </ScrollViewer>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <!-- ================================================================ -->
+        <!-- BARRA INFERIOR: Botones de acción                                -->
+        <!-- ================================================================ -->
+        <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3"
+                Margin="0,10,0,0" Padding="0,6,0,0"
+                BorderBrush="#CFD8DC" BorderThickness="0,1,0,0">
+            <DockPanel>
+                <!-- Estado -->
+                <TextBlock x:Name="lblEstado" DockPanel.Dock="Left"
+                           Style="{StaticResource LblInfo}" VerticalAlignment="Center"
+                           Text="Listo"/>
+
+                <!-- Botones derecha -->
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Cancelar" Style="{StaticResource BtnStd}"
+                            Width="90" Click="BtnCancelar_Click" IsCancel="True"/>
+                    <Button x:Name="btnGuardar" Content="Guardar todo"
+                            Style="{StaticResource BtnPrimario}" Width="120"
+                            Margin="10,0,0,0" Click="BtnGuardar_Click"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

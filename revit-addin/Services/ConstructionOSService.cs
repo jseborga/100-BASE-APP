@@ -189,5 +189,18 @@ namespace RvtConstructionOS.Services
 
         [System.Text.Json.Serialization.JsonPropertyName("metadata")]
         public Dictionary<string, string> Metadata { get; set; } = new();
+
+        /// <summary>
+        /// Notas para la IA, indexadas por nombre de parámetro.
+        /// Permiten al motor de mapeo entender parámetros no estándar.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("notas_ia")]
+        public Dictionary<string, string> NotasIA { get; set; } = new();
+
+        /// <summary>
+        /// Nota general de la familia para la IA (contexto constructivo).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("nota_familia")]
+        public string? NotaFamilia { get; set; }
     }
 }

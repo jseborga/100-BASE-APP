@@ -16,6 +16,7 @@
 
 using Autodesk.Revit.DB;
 using RvtConstructionOS.Models;
+using System.Text.RegularExpressions;
 
 namespace RvtConstructionOS.Services
 {
@@ -219,8 +220,9 @@ namespace RvtConstructionOS.Services
                 .ThenBy(e => e.TipoRevit)
                 .ToList();
 
-            // 4. Matching se ejecuta server-side en ConstructionOS (match_bim_elements)
-            //    No se aplica el motor de homologación local.
+            // Matching automático se realiza server-side en ConstructionOS
+            // (POST match_bim_elements via webhook API)
+            // Las estadísticas de matching se obtienen del servidor después del match.
 
             return result;
         }
@@ -1050,6 +1052,220 @@ namespace RvtConstructionOS.Services
             if (p == null || p.StorageType != StorageType.Double) return 0;
             double v = p.AsDouble();
             return v > 0 ? v : 0;
+        }
+
+        // -----------------------------------------------------------------------
+        // Aplicación de perfiles de parámetros custom (wizard)
+        // -----------------------------------------------------------------------
+
+        /// <summary>
+        /// Aplica los perfiles de parámetros custom a los elementos extraídos.
+        /// Lee parámetros directos del modelo y evalúa fórmulas calculadas.
+        /// Debe llamarse después de Extraer() con el documento aún abierto.
+        /// </summary>
+        /// <param name="doc">Documento Revit activo.</param>
+        /// <param name="result">Resultado de la extracción.</param>
+        /// <param name="perfiles">Perfiles configurados en el wizard.</param>
+        public void AplicarPerfilesCustom(
+            Document doc, ExtractionResult result, List<FamilyParamProfile> perfiles)
+        {
+            if (perfiles.Count == 0) return;
+
+            // Indexar perfiles por clave "Categoria|Familia"
+            var indicePerfil = perfiles.ToDictionary(
+                p => p.Clave, p => p, StringComparer.OrdinalIgnoreCase);
+
+            // Cache de tipos ya procesados → evitar releer parámetros
+            var cacheCustomValues = new Dictionary<string, Dictionary<string, object>>();
+            var cacheNotasIA      = new Dictionary<string, Dictionary<string, string>>();
+
+            foreach (var elem in result.Elementos)
+            {
+                string clavePerf = $"{elem.Categoria}|{elem.Familia}";
+                if (!indicePerfil.TryGetValue(clavePerf, out var perfil)) continue;
+
+                // Nota general de la familia
+                if (!string.IsNullOrWhiteSpace(perfil.NotaGeneralIA))
+                    elem.NotaFamiliaIA = perfil.NotaGeneralIA;
+
+                // Cache por UniqueId del tipo (todos los del mismo tipo comparten valores)
+                if (cacheCustomValues.TryGetValue(elem.UniqueId, out var cachedVals))
+                {
+                    elem.ParametrosCustomValues = new Dictionary<string, object>(cachedVals);
+                    elem.NotasIA = new Dictionary<string, string>(cacheNotasIA[elem.UniqueId]);
+                    continue;
+                }
+
+                var customValues = new Dictionary<string, object>();
+                var notasIA      = new Dictionary<string, string>();
+
+                // Obtener el ElementType para leer parámetros del tipo
+                Element? tipoElem = null;
+                Element? instEjem = null;
+
+                try
+                {
+                    var tiposCollector = new FilteredElementCollector(doc)
+                        .WhereElementIsElementType()
+                        .Where(e => e.UniqueId == elem.UniqueId)
+                        .FirstOrDefault();
+                    tipoElem = tiposCollector;
+
+                    // Buscar una instancia de ejemplo para params de instancia
+                    if (tipoElem != null)
+                    {
+                        var tipoId = tipoElem.Id;
+                        instEjem = new FilteredElementCollector(doc)
+                            .OfCategory(ObtenerBuiltInCategory(elem.Categoria))
+                            .WhereElementIsNotElementType()
+                            .FirstOrDefault(e => e.GetTypeId() == tipoId);
+                    }
+                }
+                catch { /* fallback: no leer params custom */ }
+
+                if (tipoElem == null)
+                {
+                    cacheCustomValues[elem.UniqueId] = customValues;
+                    cacheNotasIA[elem.UniqueId]      = notasIA;
+                    continue;
+                }
+
+                // --- Leer parámetros directos ---
+                // Diccionario de todos los valores numéricos disponibles (para fórmulas)
+                var valoresParaFormula = BuildValoresBase(elem);
+
+                foreach (var pd in perfil.ParametrosDirectos.Where(p => p.Activo))
+                {
+                    Element? source = pd.Origen == "Instance" ? instEjem : tipoElem;
+                    if (source == null) source = tipoElem;
+
+                    Parameter? param = BuscarParametro(source, pd.NombreRevit, pd.ParamGuid);
+                    if (param == null) continue;
+
+                    string claveExport = pd.ClaveExport;
+
+                    if (pd.EsNumerico)
+                    {
+                        double valor = FamilyParameterScanner.LeerValorNumerico(param);
+                        customValues[claveExport] = valor;
+                        valoresParaFormula[pd.NombreRevit] = valor;
+                    }
+                    else
+                    {
+                        string valor = FamilyParameterScanner.LeerValorTexto(param);
+                        if (!string.IsNullOrWhiteSpace(valor))
+                            customValues[claveExport] = valor;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(pd.NotaIA))
+                        notasIA[claveExport] = pd.NotaIA;
+                }
+
+                // --- Evaluar fórmulas calculadas ---
+                foreach (var pc in perfil.ParametrosCalculados.Where(c => c.Activo))
+                {
+                    if (string.IsNullOrWhiteSpace(pc.Formula)) continue;
+
+                    var resultado = FormulaEvaluator.Evaluar(pc.Formula, valoresParaFormula);
+                    if (resultado.Exito)
+                    {
+                        customValues[pc.ClaveExport] = resultado.Valor;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(pc.NotaIA))
+                        notasIA[pc.ClaveExport] = pc.NotaIA;
+                }
+
+                elem.ParametrosCustomValues = customValues;
+                elem.NotasIA = notasIA;
+
+                // Cachear
+                cacheCustomValues[elem.UniqueId] = customValues;
+                cacheNotasIA[elem.UniqueId]      = notasIA;
+            }
+        }
+
+        /// <summary>
+        /// Construye un diccionario con los valores estándar del BimElement
+        /// para que las fórmulas puedan referenciarlos.
+        /// </summary>
+        private static Dictionary<string, double> BuildValoresBase(BimElement elem)
+        {
+            return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Area"]              = elem.AreaBrutaIntM2,
+                ["AreaBrutaInt"]      = elem.AreaBrutaIntM2,
+                ["AreaBrutaExt"]      = elem.AreaBrutaExtM2,
+                ["AreaNetaInt"]       = elem.AreaNetaIntM2,
+                ["AreaNetaExt"]       = elem.AreaNetaExtM2,
+                ["OpeningsArea"]      = elem.AreaHuecosDescontadosM2,
+                ["Volume"]            = elem.VolumenM3,
+                ["Length"]            = elem.LongitudML,
+                ["Height"]            = elem.AlturaPromedio,
+                ["Width"]             = elem.EspesorM,
+                ["Espesor"]           = elem.EspesorM,
+                ["Count"]             = elem.CantInstancias,
+                ["Cantidad"]          = elem.Cantidad,
+                ["CantidadPrincipal"] = elem.CantidadPrincipal,
+                ["PesoTotalKg"]       = elem.PesoTotalKg,
+                ["PesoLinealKgM"]     = elem.PesoLinealKgM,
+            };
+        }
+
+        /// <summary>
+        /// Busca un parámetro por nombre o GUID en un elemento.
+        /// </summary>
+        private static Parameter? BuscarParametro(Element elem, string nombre, string guidStr)
+        {
+            // Intentar por GUID primero (más confiable)
+            if (!string.IsNullOrWhiteSpace(guidStr) && Guid.TryParse(guidStr, out var guid))
+            {
+                var p = elem.get_Parameter(guid);
+                if (p != null) return p;
+            }
+
+            // Fallback por nombre
+            foreach (Parameter p in elem.Parameters)
+            {
+                if (p.Definition?.Name?.Equals(nombre, StringComparison.OrdinalIgnoreCase) == true)
+                    return p;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Mapea nombre de categoría (español) a BuiltInCategory.
+        /// </summary>
+        private static BuiltInCategory ObtenerBuiltInCategory(string categoria)
+        {
+            return categoria switch
+            {
+                "Muros"               => BuiltInCategory.OST_Walls,
+                "Losas"               => BuiltInCategory.OST_Floors,
+                "Cubiertas"           => BuiltInCategory.OST_Roofs,
+                "Cielorrasos"         => BuiltInCategory.OST_Ceilings,
+                "Puertas"             => BuiltInCategory.OST_Doors,
+                "Ventanas"            => BuiltInCategory.OST_Windows,
+                "Pilares Arq."        => BuiltInCategory.OST_Columns,
+                "Pilares Est."        => BuiltInCategory.OST_StructuralColumns,
+                "Vigas/Cerchas"       => BuiltInCategory.OST_StructuralFraming,
+                "Escaleras"           => BuiltInCategory.OST_Stairs,
+                "Rampas"              => BuiltInCategory.OST_Ramps,
+                "Barandas"            => BuiltInCategory.OST_StairsRailing,
+                "Modelos Genéricos"   => BuiltInCategory.OST_GenericModel,
+                "Mobiliario"          => BuiltInCategory.OST_Furniture,
+                "Eq. Especial"        => BuiltInCategory.OST_SpecialityEquipment,
+                "Sanitarios"          => BuiltInCategory.OST_PlumbingFixtures,
+                "Equipos Mec."        => BuiltInCategory.OST_MechanicalEquipment,
+                "Luminarias"          => BuiltInCategory.OST_ElectricalFixtures,
+                "Eq. Eléctrico"       => BuiltInCategory.OST_ElectricalEquipment,
+                "Tuberías"            => BuiltInCategory.OST_PipeCurves,
+                "Ductos"              => BuiltInCategory.OST_DuctCurves,
+                "Bandejas Eléctricas" => BuiltInCategory.OST_CableTray,
+                "Fundaciones"         => BuiltInCategory.OST_StructuralFoundation,
+                _                     => BuiltInCategory.OST_GenericModel,
+            };
         }
     }
 

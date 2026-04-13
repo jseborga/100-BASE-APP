@@ -98,17 +98,8 @@ namespace RvtConstructionOS.Models
 
         /// <summary>
         /// Keynote leído del modelo Revit en el último escaneo.
-        /// Propuesto como Referencia Interna (default_code) en Odoo.
         /// </summary>
         public string KeynoteSeed { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Referencia interna efectiva para Odoo: CodigoPartida si está definido, KeynoteSeed si no.
-        /// Mapea a product.template.default_code.
-        /// </summary>
-        [JsonIgnore]
-        public string ReferenciaOdoo =>
-            !string.IsNullOrWhiteSpace(CodigoPartida) ? CodigoPartida : KeynoteSeed;
 
         // -----------------------------------------------------------------------
         // Helpers para construir la partida principal desde código
@@ -203,6 +194,21 @@ namespace RvtConstructionOS.Models
         public DateTime FechaModificacion { get; set; } = DateTime.Now;
         public string   NombreModelo      { get; set; } = string.Empty;
         public List<ExportRule> Reglas    { get; set; } = new();
+
+        /// <summary>
+        /// Perfiles de parámetros personalizados por familia.
+        /// Cada perfil define qué parámetros extra exportar y
+        /// fórmulas calculadas, con notas para la IA.
+        /// </summary>
+        public List<FamilyParamProfile> PerfilesParametros { get; set; } = new();
+
+        /// <summary>Busca el perfil de una familia por categoría+nombre.</summary>
+        public FamilyParamProfile? BuscarPerfil(string categoria, string familia)
+        {
+            string clave = $"{categoria}|{familia}";
+            return PerfilesParametros.FirstOrDefault(p =>
+                p.Clave.Equals(clave, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     // ============================================================
@@ -233,7 +239,6 @@ namespace RvtConstructionOS.Models
 
     /// <summary>
     /// Plantilla de exportación reutilizable entre proyectos.
-    /// Guardada en %APPDATA%\SSA\RvtConstructionOS\templates\*.template.json.
     /// </summary>
     public class PlantillaExport
     {

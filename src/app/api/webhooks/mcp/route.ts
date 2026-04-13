@@ -225,8 +225,8 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
     params: '{ revit_categoria_id?: string }',
   },
   import_bim_elements: {
-    description: 'Import BIM elements from Revit. Creates importacion + elements, auto-resolves category by name.',
-    params: '{ proyecto_id: string, archivo_nombre?: string, elementos: Array<{ revit_id: string, categoria: string, familia: string, tipo: string, parametros: Record<string,number> }> }',
+    description: 'Import BIM elements from Revit. Creates importacion + elements, auto-resolves category by name. Supports custom params with AI notes.',
+    params: '{ proyecto_id: string, archivo_nombre?: string, elementos: Array<{ revit_id: string, categoria: string, familia: string, tipo: string, parametros: Record<string,number>, metadata?: Record<string,string>, notas_ia?: Record<string,string>, nota_familia?: string }> }',
   },
   match_bim_elements: {
     description: 'Run formula-based matching on imported BIM elements. Evaluates revit_mapeos formulas, assigns partida_id + metrado_calculado. Creates derived elements for multiple mappings per category.',
@@ -1087,6 +1087,8 @@ async function handleImportBimElements(params: Record<string, unknown>) {
     tipo: string
     parametros: Record<string, number>
     metadata?: Record<string, string>
+    notas_ia?: Record<string, string>
+    nota_familia?: string
   }>
 
   if (!proyecto_id) throw new Error('proyecto_id is required')
@@ -1152,6 +1154,13 @@ async function handleImportBimElements(params: Record<string, unknown>) {
     }
     if (e.unique_id) {
       allParams._unique_id = e.unique_id
+    }
+    // Custom parameter AI notes (from wizard)
+    if (e.notas_ia && Object.keys(e.notas_ia).length > 0) {
+      allParams._notas_ia = e.notas_ia
+    }
+    if (e.nota_familia) {
+      allParams._nota_familia = e.nota_familia
     }
     return {
       importacion_id: importacion.id,
@@ -1453,13 +1462,19 @@ async function handleGetBimElementDetail(params: Record<string, unknown>) {
 
   if (error) throw new Error(error.message)
 
-  // Extract metadata and numeric params separately for readability
+  // Extract metadata, numeric params, and AI notes separately for readability
   const rawParams = (data.parametros || {}) as Record<string, unknown>
   const numericParams: Record<string, number> = {}
   const metadata: Record<string, string> = {}
+  let notasIA: Record<string, string> = {}
+  let notaFamiliaDetail: string | null = null
   for (const [k, v] of Object.entries(rawParams)) {
     if (k === '_metadata' && typeof v === 'object' && v !== null) {
       Object.assign(metadata, v)
+    } else if (k === '_notas_ia' && typeof v === 'object' && v !== null) {
+      notasIA = v as Record<string, string>
+    } else if (k === '_nota_familia' && typeof v === 'string') {
+      notaFamiliaDetail = v
     } else if (k === '_unique_id') {
       metadata.unique_id = v as string
     } else if (typeof v === 'number') {
@@ -1485,6 +1500,8 @@ async function handleGetBimElementDetail(params: Record<string, unknown>) {
       ...data,
       numeric_params: numericParams,
       metadata,
+      notas_ia: Object.keys(notasIA).length > 0 ? notasIA : undefined,
+      nota_familia: notaFamiliaDetail,
     },
     available_mapeos: availableMapeos,
   }
@@ -1861,13 +1878,19 @@ async function handleSuggestElementMapping(params: Record<string, unknown>) {
   const catId = cat?.id
   const catNombre = cat?.nombre_es || cat?.nombre || 'Desconocida'
 
-  // Extract numeric params and metadata
+  // Extract numeric params, metadata, and AI notes
   const rawParams = (elem.parametros || {}) as Record<string, unknown>
   const numericParams: Record<string, number> = {}
   const metadata: Record<string, string> = {}
+  let notasIA: Record<string, string> = {}
+  let notaFamilia: string | null = null
   for (const [k, v] of Object.entries(rawParams)) {
     if (k === '_metadata' && typeof v === 'object' && v !== null) {
       Object.assign(metadata, v)
+    } else if (k === '_notas_ia' && typeof v === 'object' && v !== null) {
+      notasIA = v as Record<string, string>
+    } else if (k === '_nota_familia' && typeof v === 'string') {
+      notaFamilia = v
     } else if (k === '_unique_id') {
       // skip
     } else if (typeof v === 'number' && v > 0) {
@@ -1968,6 +1991,8 @@ async function handleSuggestElementMapping(params: Record<string, unknown>) {
     },
     parametros_numericos: numericParams,
     metadata,
+    notas_ia: Object.keys(notasIA).length > 0 ? notasIA : undefined,
+    nota_familia: notaFamilia,
     mapeos_existentes: evaluatedMapeos,
     partidas_candidatas: relevantPartidas.map(p => ({
       id: p.id,
@@ -1980,7 +2005,7 @@ async function handleSuggestElementMapping(params: Record<string, unknown>) {
     formulas_sugeridas: suggestedFormulas,
     pais_codigo: pais_codigo,
     estandar: estandarCode,
-    instruccion: `Analiza los parametros del elemento y los mapeos existentes. Si faltan mapeos, usa create_revit_mapeo con la formula apropiada y la partida candidata. Si el mapeo existe pero no aplica, revisa la formula. Para aplicar directamente, usa apply_mapping_to_element.`,
+    instruccion: `Analiza los parametros del elemento y los mapeos existentes. Si hay notas_ia o nota_familia, úsalas como contexto del modelador para entender qué mide cada parámetro custom y a qué partida corresponde. Si faltan mapeos, usa create_revit_mapeo con la formula apropiada y la partida candidata. Si el mapeo existe pero no aplica, revisa la formula. Para aplicar directamente, usa apply_mapping_to_element. Los parámetros con prefijo calc_ son calculados con fórmulas en Revit.`,
   }
 }
 

@@ -253,6 +253,28 @@ namespace RvtConstructionOS.Models
         public MatchResult? MatchResult { get; set; }
 
         // -----------------------------------------------------------------------
+        // Parámetros custom configurados por el usuario (wizard)
+        // -----------------------------------------------------------------------
+
+        /// <summary>
+        /// Valores de parámetros custom leídos del modelo según el FamilyParamProfile.
+        /// Clave = nombre del parámetro o alias, Valor = valor leído o calculado.
+        /// Se puebla en RevitExtractionService usando los perfiles del wizard.
+        /// </summary>
+        public Dictionary<string, object> ParametrosCustomValues { get; set; } = new();
+
+        /// <summary>
+        /// Notas para la IA asociadas a los parámetros custom.
+        /// Clave = misma clave que ParametrosCustomValues, Valor = nota explicativa.
+        /// </summary>
+        public Dictionary<string, string> NotasIA { get; set; } = new();
+
+        /// <summary>
+        /// Nota general de la familia para la IA (del FamilyParamProfile).
+        /// </summary>
+        public string NotaFamiliaIA { get; set; } = string.Empty;
+
+        // -----------------------------------------------------------------------
         // Metadatos de control
         // -----------------------------------------------------------------------
 
