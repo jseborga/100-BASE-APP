@@ -103,12 +103,57 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await params
+  const { id: proyectoId } = await params
   const admin = getAdmin()
 
   try {
     const body = await request.json()
     const action = body.action || 'update'
+
+    // --- Apply a derived rule: aggregate BIM params → proyecto_partida ---
+    if (action === 'apply_derived') {
+      const { partida_id, metrado, notas } = body
+      if (!partida_id || metrado == null) {
+        return NextResponse.json({ error: 'partida_id y metrado son requeridos' }, { status: 400 })
+      }
+
+      // Upsert proyecto_partidas
+      const { data: existing } = await admin
+        .from('proyecto_partidas')
+        .select('id')
+        .eq('proyecto_id', proyectoId)
+        .eq('partida_id', partida_id)
+        .maybeSingle()
+
+      if (existing) {
+        await admin
+          .from('proyecto_partidas')
+          .update({
+            metrado_bim: Math.round(metrado * 10000) / 10000,
+            metrado_final: Math.round(metrado * 10000) / 10000,
+            notas: notas || null,
+          })
+          .eq('id', existing.id)
+
+        return NextResponse.json({ action: 'updated', proyecto_partida_id: existing.id })
+      } else {
+        const { data: created, error: createErr } = await admin
+          .from('proyecto_partidas')
+          .insert({
+            proyecto_id: proyectoId,
+            partida_id: partida_id,
+            metrado_bim: Math.round(metrado * 10000) / 10000,
+            metrado_final: Math.round(metrado * 10000) / 10000,
+            cantidad: 1,
+            notas: notas || null,
+          })
+          .select('id')
+          .single()
+
+        if (createErr) throw new Error(createErr.message)
+        return NextResponse.json({ action: 'created', proyecto_partida_id: created.id })
+      }
+    }
 
     // --- Reset a group of elements back to pendiente ---
     if (action === 'reset_group') {

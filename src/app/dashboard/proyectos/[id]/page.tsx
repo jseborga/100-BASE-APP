@@ -182,6 +182,19 @@ export default function ProyectoDetailPage() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const mapFormRef = useRef<HTMLDivElement>(null)
 
+  // Derived rule state
+  const [showDerived, setShowDerived] = useState(false)
+  const [derivedSources, setDerivedSources] = useState<Set<string>>(new Set()) // group keys
+  const [derivedParam, setDerivedParam] = useState('')
+  const [derivedFactor, setDerivedFactor] = useState('1')
+  const [derivedPartidaSearch, setDerivedPartidaSearch] = useState('')
+  const [derivedPartidaResults, setDerivedPartidaResults] = useState<{id:string;nombre:string;unidad:string;capitulo:string|null}[]>([])
+  const [derivedSelectedPartida, setDerivedSelectedPartida] = useState<{id:string;nombre:string;unidad:string}|null>(null)
+  const [derivedSearching, setDerivedSearching] = useState(false)
+  const [derivedSaving, setDerivedSaving] = useState(false)
+  const [derivedNotas, setDerivedNotas] = useState('')
+  const derivedFormRef = useRef<HTMLDivElement>(null)
+
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch(`/api/proyectos/${proyectoId}`)
@@ -334,12 +347,72 @@ export default function ProyectoDetailPage() {
     return () => clearTimeout(t)
   }, [mapPartidaSearch])
 
-  // Scroll to mapping form
+  // Partida search for derived rules
+  useEffect(() => {
+    if (derivedPartidaSearch.length < 2) { setDerivedPartidaResults([]); return }
+    const t = setTimeout(async () => {
+      setDerivedSearching(true)
+      try {
+        const res = await fetch('/api/mapeos/partidas?q=' + encodeURIComponent(derivedPartidaSearch))
+        if (res.ok) { const d = await res.json(); setDerivedPartidaResults(d.partidas || []) }
+      } catch { /* */ }
+      finally { setDerivedSearching(false) }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [derivedPartidaSearch])
+
+  // Scroll to forms
   useEffect(() => {
     if (mappingGroup && mapFormRef.current) {
       setTimeout(() => mapFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100)
     }
   }, [mappingGroup])
+
+  useEffect(() => {
+    if (showDerived && derivedFormRef.current) {
+      setTimeout(() => derivedFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100)
+    }
+  }, [showDerived])
+
+  const handleApplyDerived = async () => {
+    if (!derivedSelectedPartida || !derivedCalculation || derivedCalculation.result <= 0) return
+    setDerivedSaving(true)
+    try {
+      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'apply_derived',
+          partida_id: derivedSelectedPartida.id,
+          metrado: derivedCalculation.result,
+          notas: derivedNotas || `Derivado BIM: ${derivedParam} de ${derivedSources.size} grupo(s) x ${derivedFactor}`,
+        }),
+      })
+      if (!res.ok) throw new Error('Error applying derived rule')
+      // Reset form
+      setShowDerived(false)
+      setDerivedSources(new Set())
+      setDerivedParam('')
+      setDerivedFactor('1')
+      setDerivedSelectedPartida(null)
+      setDerivedPartidaSearch('')
+      setDerivedNotas('')
+      await fetchData()
+    } catch (err) {
+      console.error('Derived apply error:', err)
+    } finally {
+      setDerivedSaving(false)
+    }
+  }
+
+  const toggleDerivedSource = (key: string) => {
+    setDerivedSources(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   const handleGroupMap = async (group: BimGroup) => {
     if (!mapSelectedPartida || !mapFormula.trim() || !activeImportId) return
@@ -448,6 +521,36 @@ export default function ProyectoDetailPage() {
       }
     })
   }, [bimData?.elements, bimData?.suggested_mapeos])
+
+  // Compute derived metrado from selected groups + param
+  const derivedCalculation = useMemo(() => {
+    if (derivedSources.size === 0 || !derivedParam) return null
+    const selectedGroups = bimGroups.filter(g => derivedSources.has(g.key))
+    let total = 0
+    let count = 0
+    for (const g of selectedGroups) {
+      for (const el of g.elements) {
+        const val = el.parametros?.[derivedParam]
+        if (typeof val === 'number' && val > 0) {
+          total += val
+          count++
+        }
+      }
+    }
+    const factor = parseFloat(derivedFactor) || 1
+    return { total, count, factor, result: total * factor }
+  }, [derivedSources, derivedParam, derivedFactor, bimGroups])
+
+  // Get all unique params across all groups (for derived param selector)
+  const allAvailableParams = useMemo(() => {
+    const params = new Set<string>()
+    for (const g of bimGroups) {
+      for (const k of Object.keys(g.sampleParams)) {
+        if (g.sampleParams[k] > 0) params.add(k)
+      }
+    }
+    return Array.from(params).sort()
+  }, [bimGroups])
 
   // Filter groups
   const filteredGroups = useMemo(() => {
@@ -1083,6 +1186,15 @@ export default function ProyectoDetailPage() {
                       <RefreshCw className={`w-3.5 h-3.5 ${bimLoading ? 'animate-spin' : ''}`} />
                       Actualizar
                     </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 text-xs text-violet-700 border-violet-200 hover:bg-violet-50"
+                      onClick={() => setShowDerived(!showDerived)}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Regla derivada
+                    </Button>
                     {mapeados > 0 && (
                       <Button
                         size="sm"
@@ -1473,6 +1585,175 @@ export default function ProyectoDetailPage() {
                     })
                   )}
                 </div>
+
+                {/* Derived Rule Form */}
+                {showDerived && (
+                  <div ref={derivedFormRef} className="border rounded-lg bg-violet-50/50 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-medium flex items-center gap-2">
+                        <Plus className="w-4 h-4 text-violet-600" />
+                        Nueva regla derivada
+                      </h4>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowDerived(false)}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Crea una partida derivada sumando un parametro de los grupos seleccionados. Ej: dintel = suma de anchos de puertas + ventanas, zocalos = longitud de muros.
+                    </p>
+
+                    {/* Source groups */}
+                    <div>
+                      <p className="text-[11px] font-medium text-muted-foreground mb-1.5">Grupos origen (selecciona uno o varios):</p>
+                      <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                        {bimGroups.map(g => (
+                          <button
+                            key={g.key}
+                            onClick={() => toggleDerivedSource(g.key)}
+                            className={`px-2.5 py-1.5 rounded-md text-xs border transition-colors ${
+                              derivedSources.has(g.key)
+                                ? 'bg-violet-100 border-violet-400 text-violet-800 font-medium'
+                                : 'bg-background border-border text-muted-foreground hover:border-violet-300'
+                            }`}
+                          >
+                            <span>{g.categoriaEs}</span>
+                            <span className="mx-1 opacity-40">/</span>
+                            <span>{g.tipo}</span>
+                            <span className="ml-1 opacity-50">({g.elements.length})</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Parameter + Factor */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Parametro a sumar</label>
+                        <select
+                          value={derivedParam}
+                          onChange={e => setDerivedParam(e.target.value)}
+                          className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs"
+                        >
+                          <option value="">Seleccionar...</option>
+                          {allAvailableParams.map(p => (
+                            <option key={p} value={p}>{p}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Factor / multiplicador</label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={derivedFactor}
+                          onChange={e => setDerivedFactor(e.target.value)}
+                          className="h-8 text-xs"
+                          placeholder="1.05"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Preview</label>
+                        {derivedCalculation ? (
+                          <div className="h-8 flex items-center text-xs">
+                            <span className="font-mono text-green-700 font-medium">
+                              = {derivedCalculation.result.toFixed(2)}
+                            </span>
+                            <span className="text-muted-foreground ml-2">
+                              ({derivedCalculation.count} elem, sum={derivedCalculation.total.toFixed(2)} x {derivedCalculation.factor})
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="h-8 flex items-center text-[11px] text-muted-foreground">
+                            Selecciona grupos y parametro
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Partida search + notas */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="relative">
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Partida destino</label>
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                          <Input
+                            placeholder="Buscar partida..."
+                            value={derivedPartidaSearch}
+                            onChange={e => {
+                              setDerivedPartidaSearch(e.target.value)
+                              if (derivedSelectedPartida && e.target.value !== derivedSelectedPartida.nombre) {
+                                setDerivedSelectedPartida(null)
+                              }
+                            }}
+                            className="h-8 pl-8 text-xs"
+                          />
+                          {derivedSearching && <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+                        </div>
+                        {derivedPartidaResults.length > 0 && !derivedSelectedPartida && (
+                          <div className="absolute z-10 mt-1 w-full bg-background border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                            {derivedPartidaResults.map(p => (
+                              <button
+                                key={p.id}
+                                onClick={() => {
+                                  setDerivedSelectedPartida({ id: p.id, nombre: p.nombre, unidad: p.unidad })
+                                  setDerivedPartidaSearch(p.nombre)
+                                  setDerivedPartidaResults([])
+                                }}
+                                className="w-full text-left px-3 py-2 hover:bg-muted transition-colors text-xs"
+                              >
+                                <span className="font-medium">{p.nombre}</span>
+                                <span className="text-muted-foreground ml-2">({p.unidad})</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {derivedSelectedPartida && (
+                          <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            {derivedSelectedPartida.nombre} ({derivedSelectedPartida.unidad})
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Notas (opcional)</label>
+                        <Input
+                          placeholder="Ej: Dintel sobre puertas y ventanas"
+                          value={derivedNotas}
+                          onChange={e => setDerivedNotas(e.target.value)}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-between pt-1">
+                      <p className="text-[10px] text-muted-foreground">
+                        {derivedSources.size > 0 && derivedParam
+                          ? `Sumando ${derivedParam} de ${derivedSources.size} grupo(s)`
+                          : 'Selecciona grupos y un parametro para calcular'}
+                      </p>
+                      <div className="flex gap-2">
+                        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setShowDerived(false)}>
+                          Cancelar
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-8 gap-1.5 text-xs"
+                          disabled={!derivedSelectedPartida || !derivedCalculation || derivedCalculation.result <= 0 || derivedSaving}
+                          onClick={handleApplyDerived}
+                        >
+                          {derivedSaving ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Save className="w-3.5 h-3.5" />
+                          )}
+                          Aplicar {derivedCalculation ? derivedCalculation.result.toFixed(2) : '0'} {derivedSelectedPartida?.unidad || ''} a partidas
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Summary */}
                 {elements.length > 0 && (
