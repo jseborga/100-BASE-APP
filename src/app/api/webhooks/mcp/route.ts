@@ -83,6 +83,7 @@ const ACTIONS: Record<string, ActionHandler> = {
 
   // --- Write operations ---
   create_project: handleCreateProject,
+  update_project: handleUpdateProject,
   add_partidas_to_project: handleAddPartidasToProject,
   remove_partidas_from_project: handleRemovePartidasFromProject,
   update_metrado: handleUpdateMetrado,
@@ -143,7 +144,11 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
   },
   create_project: {
     description: 'Create a new project',
-    params: '{ nombre: string, pais_id: string, ubicacion?: string, tipologia?: string, descripcion?: string }',
+    params: '{ nombre: string, pais_id: string, ubicacion?: string, tipologia?: string, descripcion?: string, propietario_id?: string, org_id?: string }',
+  },
+  update_project: {
+    description: 'Update project fields',
+    params: '{ proyecto_id: string, nombre?: string, descripcion?: string, tipologia?: string, ubicacion?: string, estado?: string, propietario_id?: string, org_id?: string }',
   },
   add_partidas_to_project: {
     description: 'Add one or more catalog partidas to a project',
@@ -265,8 +270,36 @@ async function handleCreateProject(params: Record<string, unknown>) {
       ubicacion: (params.ubicacion as string) || null,
       tipologia: (params.tipologia as string) || null,
       descripcion: (params.descripcion as string) || null,
+      propietario_id: (params.propietario_id as string) || null,
+      org_id: (params.org_id as string) || null,
       estado: 'activo',
     })
+    .select('id, nombre, estado')
+    .single()
+  if (error) throw new Error(error.message)
+  return { project: data }
+}
+
+async function handleUpdateProject(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const id = params.proyecto_id as string
+  if (!id) throw new Error('proyecto_id is required')
+
+  const updates: Record<string, unknown> = {}
+  if (params.nombre) updates.nombre = params.nombre
+  if (params.descripcion !== undefined) updates.descripcion = params.descripcion
+  if (params.tipologia) updates.tipologia = params.tipologia
+  if (params.ubicacion) updates.ubicacion = params.ubicacion
+  if (params.estado) updates.estado = params.estado
+  if (params.propietario_id) updates.propietario_id = params.propietario_id
+  if (params.org_id) updates.org_id = params.org_id
+
+  if (Object.keys(updates).length === 0) throw new Error('No fields to update')
+
+  const { data, error } = await admin
+    .from('proyectos')
+    .update(updates)
+    .eq('id', id)
     .select('id, nombre, estado')
     .single()
   if (error) throw new Error(error.message)
