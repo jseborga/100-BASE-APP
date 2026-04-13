@@ -119,6 +119,7 @@ const ACTIONS: Record<string, ActionHandler> = {
   analyze_bim_import: handleAnalyzeBimImport,
   suggest_element_mapping: handleSuggestElementMapping,
   get_mapping_coverage: handleGetMappingCoverage,
+  resolve_bim_categories: handleResolveBimCategories,
 }
 
 // Documentation for GET discovery
@@ -270,6 +271,10 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
   get_mapping_coverage: {
     description: 'Show mapping coverage statistics: how many categories have rules, which categories are missing, rules per category, per-country partida coverage. Use to identify gaps in the mapping standard.',
     params: '{ pais_codigo?: string }',
+  },
+  resolve_bim_categories: {
+    description: 'Re-resolve revit_categoria_id for elements with null category. Uses familia name to infer Revit category (e.g., "Basic Wall"→Walls, "Floor"→Floors, "M_Concrete-Rectangular-Column"→Structural Columns).',
+    params: '{ importacion_id: string }',
   },
 }
 
@@ -1094,8 +1099,32 @@ async function handleImportBimElements(params: Record<string, unknown>) {
 
   const catMap = new Map<string, string>()
   for (const c of categorias || []) {
-    catMap.set(c.nombre, c.id)
-    if (c.nombre_es) catMap.set(c.nombre_es, c.id)
+    catMap.set(c.nombre, c.id)               // English: "Walls"
+    if (c.nombre_es) catMap.set(c.nombre_es, c.id) // Spanish: "Muros"
+  }
+
+  // Aliases: Add-in C# uses different Spanish names than BD nombre_es
+  // Map common aliases to their English category names, then resolve
+  const aliases: Record<string, string> = {
+    'Pisos': 'Floors', 'Losas': 'Floors', 'Pisos/Losas': 'Floors',
+    'Cielorrasos': 'Ceilings', 'Cielos Rasos': 'Ceilings', 'Cielo Raso': 'Ceilings',
+    'Pilares Est.': 'Structural Columns', 'Pilares Estructurales': 'Structural Columns',
+    'Columnas': 'Structural Columns', 'Columnas Estructurales': 'Structural Columns',
+    'Vigas/Cerchas': 'Structural Framing', 'Vigas': 'Structural Framing',
+    'Vigas Estructurales': 'Structural Framing',
+    'Sanitarios': 'Plumbing Fixtures', 'Aparatos Sanitarios': 'Plumbing Fixtures',
+    'Artefactos Eléc.': 'Electrical Fixtures', 'Aparatos Eléctricos': 'Electrical Fixtures',
+    'Luminarias': 'Electrical Fixtures', 'Eq. Eléctrico': 'Electrical Fixtures',
+    'Fundaciones': 'Structural Columns', // closest match
+    'Cubiertas': 'Roofs', 'Escaleras': 'Stairs', 'Barandas': 'Railings',
+    'Muros': 'Walls', 'Puertas': 'Doors', 'Ventanas': 'Windows',
+    'Paneles Muro Cortina': 'Walls', 'Montantes Muro Cortina': 'Railings',
+    'Curtain Wall': 'Walls', 'Basic Wall': 'Walls',
+  }
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    if (!catMap.has(alias) && catMap.has(canonical)) {
+      catMap.set(alias, catMap.get(canonical)!)
+    }
   }
 
   // Create importacion
@@ -1983,5 +2012,111 @@ async function handleGetMappingCoverage(params: Record<string, unknown>) {
     })),
     pais_codigo: pais_codigo,
     instruccion: `Usa esta información para identificar gaps en el estándar de mapeo. Para categorías sin cobertura, analiza elementos de ejemplo con suggest_element_mapping y crea reglas con create_revit_mapeo.`,
+  }
+}
+
+async function handleResolveBimCategories(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const importacion_id = params.importacion_id as string
+  if (!importacion_id) throw new Error('importacion_id is required')
+
+  // Load categories
+  const { data: categorias } = await admin
+    .from('revit_categorias')
+    .select('id, nombre, nombre_es')
+
+  const catNameToId = new Map<string, string>()
+  for (const c of categorias || []) {
+    catNameToId.set(c.nombre.toLowerCase(), c.id)
+    if (c.nombre_es) catNameToId.set(c.nombre_es.toLowerCase(), c.id)
+  }
+
+  // Familia → category mapping (Revit family names → English category)
+  const familiaMap: Record<string, string> = {
+    // Walls
+    'basic wall': 'walls', 'curtain wall': 'walls', 'stacked wall': 'walls',
+    // Floors
+    'floor': 'floors',
+    // Ceilings
+    'compound ceiling': 'ceilings', 'basic ceiling': 'ceilings',
+    // Structural Columns
+    'm_concrete-rectangular-column': 'structural columns',
+    'concrete-rectangular-column': 'structural columns',
+    'm_concrete-round-column': 'structural columns',
+    // Structural Framing (beams)
+    'm_concrete-rectangular beam': 'structural framing',
+    'concrete-rectangular beam': 'structural framing',
+    'precast-inverted tee': 'structural framing',
+    // Stairs
+    'cast-in-place stair': 'stairs', 'assembled stair': 'stairs',
+    'precast stair': 'stairs',
+    // Railings
+    'baranda': 'railings',
+    // Doors
+    'puerta_contraplacada_13_cm': 'doors',
+    'puerta aluminio_vt (cws)': 'doors',
+    // Windows
+    'system panel': 'windows',
+    // Plumbing
+    'incepa_avant': 'plumbing fixtures',
+    'rejilla_sanitaria': 'plumbing fixtures',
+  }
+
+  // Load elements with null category
+  const { data: elements, error } = await admin
+    .from('bim_elementos')
+    .select('id, familia, tipo')
+    .eq('importacion_id', importacion_id)
+    .is('revit_categoria_id', null)
+
+  if (error) throw new Error(error.message)
+  if (!elements?.length) return { message: 'No elements with null category found', updated: 0 }
+
+  let updated = 0
+  const resolved: Record<string, number> = {}
+  const unresolved: string[] = []
+
+  for (const el of elements) {
+    const famLower = (el.familia || '').toLowerCase()
+
+    // Try exact familia match
+    let catName = familiaMap[famLower]
+
+    // Try partial match on common prefixes
+    if (!catName) {
+      if (famLower.startsWith('basic wall') || famLower.includes('wall')) catName = 'walls'
+      else if (famLower.startsWith('floor')) catName = 'floors'
+      else if (famLower.includes('ceiling')) catName = 'ceilings'
+      else if (famLower.includes('column')) catName = 'structural columns'
+      else if (famLower.includes('beam') || famLower.includes('framing')) catName = 'structural framing'
+      else if (famLower.includes('stair') || famLower.includes('escalera')) catName = 'stairs'
+      else if (famLower.includes('railing') || famLower.includes('baranda')) catName = 'railings'
+      else if (famLower.includes('puerta') || famLower.includes('door') || famLower.startsWith('m_d')) catName = 'doors'
+      else if (famLower.includes('window') || famLower.includes('ventana')) catName = 'windows'
+      else if (famLower.includes('inodoro') || famLower.includes('lavamano') || famLower.includes('ducha')
+        || famLower.includes('incepa') || famLower.includes('celite') || famLower.includes('deca_')
+        || famLower.includes('rejilla_sanitaria') || famLower.includes('chuveiro')) catName = 'plumbing fixtures'
+      else if (famLower.includes('luminaria') || famLower.includes('electrical')) catName = 'electrical fixtures'
+      else if (famLower.includes('mullion')) catName = 'walls'
+    }
+
+    const catId = catName ? catNameToId.get(catName) : undefined
+    if (catId) {
+      await admin.from('bim_elementos').update({ revit_categoria_id: catId }).eq('id', el.id)
+      updated++
+      resolved[catName!] = (resolved[catName!] || 0) + 1
+    } else {
+      const key = `${el.familia} / ${el.tipo}`
+      if (!unresolved.includes(key)) unresolved.push(key)
+    }
+  }
+
+  return {
+    total_sin_categoria: elements.length,
+    resueltos: updated,
+    sin_resolver: elements.length - updated,
+    por_categoria: resolved,
+    familias_sin_resolver: unresolved,
+    message: `Resolved ${updated}/${elements.length} elements`,
   }
 }

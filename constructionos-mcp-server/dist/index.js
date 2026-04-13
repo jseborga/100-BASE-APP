@@ -318,6 +318,12 @@ server.tool('get_mapping_coverage', 'Show mapping coverage statistics: categorie
     const result = await callWebhook('get_mapping_coverage', params);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
 });
+server.tool('resolve_bim_categories', 'Re-resolve Revit categories for imported BIM elements that have null category. Infers category from familia name (e.g., "Basic Wall"→Walls, "Floor"→Floors, "M_Concrete-Rectangular-Column"→Structural Columns). Run this after import if elements show "Sin categoría".', {
+    importacion_id: zod_1.z.string().uuid().describe('Import UUID to re-resolve'),
+}, async (params) => {
+    const result = await callWebhook('resolve_bim_categories', params);
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+});
 // ============================================================
 // Start server
 // ============================================================
