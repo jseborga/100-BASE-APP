@@ -488,6 +488,7 @@ export default function ProyectoDetailPage() {
     if (linkSelectedGroups.size === 0 || !linkFormula.trim() || !activeImportId) return
     setLinkSaving(true)
     try {
+      // 1. Map BIM elements to this partida
       for (const groupKey of linkSelectedGroups) {
         const group = bimGroups.find(g => g.key === groupKey)
         if (!group) continue
@@ -504,6 +505,34 @@ export default function ProyectoDetailPage() {
           }),
         })
       }
+
+      // 2. Calculate total metrado from formula across all linked elements
+      let totalMetrado = 0
+      for (const groupKey of linkSelectedGroups) {
+        const group = bimGroups.find(g => g.key === groupKey)
+        if (!group) continue
+        for (const el of group.elements) {
+          const result = testFormula(linkFormula, el.parametros)
+          if (result && result.startsWith('=')) {
+            totalMetrado += parseFloat(result.slice(2)) || 0
+          }
+        }
+      }
+
+      // 3. Update proyecto_partidas.metrado_bim directly
+      if (totalMetrado > 0) {
+        await fetch(`/api/proyectos/${proyectoId}/bim`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'apply_derived',
+            partida_id: partidaId,
+            metrado: totalMetrado,
+            notas: `BIM: ${linkFormula}`,
+          }),
+        })
+      }
+
       setLinkingPartida(null)
       setLinkSelectedGroups(new Set())
       setLinkFormula('')
