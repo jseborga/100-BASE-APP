@@ -953,19 +953,27 @@ export default function ProyectoDetailPage() {
           </Card>
         </Link>
 
-        <Link href={`/dashboard/mapeos?proyecto=${proyectoId}`}>
-          <Card className="hover:border-primary/40 transition-all cursor-pointer h-full">
-            <CardContent className="py-5 flex items-center gap-3">
-              <div className="p-2.5 rounded-lg bg-indigo-100">
-                <GitBranch className="w-5 h-5 text-indigo-700" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-sm">Mapeos BIM</h3>
-                <p className="text-xs text-muted-foreground">Reglas + formulas</p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
+        <Card
+          className="hover:border-primary/40 transition-all cursor-pointer h-full"
+          onClick={() => {
+            setBimOpen(true)
+            setTimeout(() => document.getElementById('bim-section')?.scrollIntoView({ behavior: 'smooth' }), 100)
+          }}
+        >
+          <CardContent className="py-5 flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-indigo-100">
+              <Link2 className="w-5 h-5 text-indigo-700" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm">Vincular BIM</h3>
+              <p className="text-xs text-muted-foreground">
+                {bimData && bimData.imports.length > 0
+                  ? `${bimData.elements?.length || 0} elementos`
+                  : 'Sin importaciones'}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
         <Link href="/dashboard/agentes">
           <Card className="hover:border-primary/40 transition-all cursor-pointer h-full">
@@ -1102,6 +1110,7 @@ export default function ProyectoDetailPage() {
       )}
 
       {/* BIM Section */}
+      <div id="bim-section" />
       {bimData && bimData.imports.length > 0 && (() => {
         const elements = bimData.elements || []
         const mapeados = elements.filter(e => e.estado === 'mapeado').length
