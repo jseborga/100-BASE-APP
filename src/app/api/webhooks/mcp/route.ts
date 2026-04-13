@@ -1209,7 +1209,7 @@ async function handleMatchBimElements(params: Record<string, unknown>) {
   // Load all mapeos grouped by category (include partida info + instrucciones for write-back)
   const { data: mapeos } = await admin
     .from('revit_mapeos')
-    .select('id, revit_categoria_id, partida_id, formula, parametro_principal, prioridad, instrucciones_computo, descripcion, partidas(nombre, unidad, partida_localizaciones(codigo_local, estandares(codigo)))')
+    .select('id, revit_categoria_id, partida_id, formula, parametro_principal, prioridad, instrucciones_computo, descripcion, condicion_filtro, partidas(nombre, unidad, partida_localizaciones(codigo_local, estandares(codigo)))')
     .order('prioridad', { ascending: true })
 
   if (!mapeos?.length) {
@@ -1252,6 +1252,12 @@ async function handleMatchBimElements(params: Record<string, unknown>) {
     let firstDone = false
 
     for (const mapeo of catMapeos) {
+      // Evaluate condicion_filtro: if present and <= 0, skip this mapeo
+      if (mapeo.condicion_filtro) {
+        const condResult = evaluateFormula(mapeo.condicion_filtro as string, paramData)
+        if (condResult === null || condResult <= 0) continue
+      }
+
       const result = evaluateFormula(mapeo.formula, paramData)
       if (result === null || result <= 0) continue
 
