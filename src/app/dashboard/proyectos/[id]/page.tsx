@@ -10,7 +10,7 @@ import {
   ArrowLeft, MapPin, Building2, Calendar, Bot, FileSpreadsheet,
   Upload, Trash2, Check, X, Pencil, Plus, ChevronDown, ChevronRight, Download,
   LayoutTemplate, Loader2, Box, RefreshCw, CheckCircle2, AlertCircle, Clock,
-  Search,
+  Search, GitBranch,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -447,7 +447,7 @@ export default function ProyectoDetailPage() {
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Link href={`/dashboard/catalogo?proyecto=${proyectoId}`}>
           <Card className="hover:border-primary/40 transition-all cursor-pointer h-full">
             <CardContent className="py-5 flex items-center gap-3">
@@ -456,7 +456,21 @@ export default function ProyectoDetailPage() {
               </div>
               <div>
                 <h3 className="font-semibold text-sm">Agregar partidas</h3>
-                <p className="text-xs text-muted-foreground">Desde catálogo</p>
+                <p className="text-xs text-muted-foreground">Desde catalogo</p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <Link href={`/dashboard/mapeos?proyecto=${proyectoId}`}>
+          <Card className="hover:border-primary/40 transition-all cursor-pointer h-full">
+            <CardContent className="py-5 flex items-center gap-3">
+              <div className="p-2.5 rounded-lg bg-indigo-100">
+                <GitBranch className="w-5 h-5 text-indigo-700" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm">Mapeos BIM</h3>
+                <p className="text-xs text-muted-foreground">Reglas + formulas</p>
               </div>
             </CardContent>
           </Card>
@@ -469,7 +483,7 @@ export default function ProyectoDetailPage() {
                 <Bot className="w-5 h-5 text-violet-700" />
               </div>
               <div>
-                <h3 className="font-semibold text-sm">Consultar agentes IA</h3>
+                <h3 className="font-semibold text-sm">Agentes IA</h3>
                 <p className="text-xs text-muted-foreground">Normativa, metrados</p>
               </div>
             </CardContent>
@@ -490,7 +504,7 @@ export default function ProyectoDetailPage() {
                 )}
               </div>
               <div>
-                <h3 className="font-semibold text-sm">Cargar plantilla</h3>
+                <h3 className="font-semibold text-sm">Plantilla</h3>
                 <p className="text-xs text-muted-foreground">{proyecto.tipologia}</p>
               </div>
             </CardContent>
@@ -700,6 +714,16 @@ export default function ProyectoDetailPage() {
                     <option value="sin_match">Sin match ({sinMatch})</option>
                   </select>
                   <div className="ml-auto flex gap-2">
+                    <Link href={`/dashboard/mapeos?proyecto=${proyectoId}`}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 text-xs"
+                      >
+                        <GitBranch className="w-3.5 h-3.5" />
+                        Editar Mapeos
+                      </Button>
+                    </Link>
                     <Button
                       variant="outline"
                       size="sm"

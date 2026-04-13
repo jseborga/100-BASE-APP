@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import {
   Card, CardContent, CardHeader, CardTitle,
 } from '@/components/ui/card'
@@ -91,6 +92,9 @@ function testFormula(formula: string): string | null {
 // ============================================================
 
 export default function MapeosPage() {
+  const searchParams = useSearchParams()
+  const urlProyecto = searchParams.get('proyecto') || ''
+
   const [mapeos, setMapeos] = useState<Mapeo[]>([])
   const [categorias, setCategorias] = useState<RevitCategoria[]>([])
   const [proyectos, setProyectos] = useState<Proyecto[]>([])
@@ -99,8 +103,8 @@ export default function MapeosPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Project selector
-  const [selectedProyecto, setSelectedProyecto] = useState('')
+  // Project selector — initialize from URL param
+  const [selectedProyecto, setSelectedProyecto] = useState(urlProyecto)
   const [loadingProyecto, setLoadingProyecto] = useState(false)
 
   // UI state
@@ -163,7 +167,7 @@ export default function MapeosPage() {
     }
   }, [])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => { fetchData(urlProyecto || undefined) }, [fetchData, urlProyecto])
 
   const handleSelectProyecto = useCallback((id: string) => {
     setSelectedProyecto(id)
