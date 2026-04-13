@@ -99,6 +99,18 @@ interface BimGroup {
   partida: { id: string; nombre: string; unidad: string } | null
   formula: string | null
   metradoTotal: number
+  suggestions: SuggestedMapeo[] // suggested formulas from revit_mapeos
+}
+
+interface SuggestedMapeo {
+  id: string
+  revit_categoria_id: string
+  formula: string
+  parametro_principal: string | null
+  descripcion: string | null
+  condicion_filtro: string | null
+  partida_id: string
+  partidas: { id: string; nombre: string; unidad: string; capitulo: string | null } | null
 }
 
 interface BimData {
@@ -106,6 +118,7 @@ interface BimData {
   elements: BimElement[]
   count: number
   latest_import_id?: string
+  suggested_mapeos?: SuggestedMapeo[]
 }
 
 const ESTADO_BIM: Record<string, { label: string; icon: typeof Clock; color: string }> = {
@@ -313,6 +326,7 @@ export default function ProyectoDetailPage() {
   // Build BIM groups from elements
   const bimGroups = useMemo((): BimGroup[] => {
     if (!bimData?.elements) return []
+    const sugMapeos = bimData.suggested_mapeos || []
     const map = new Map<string, BimElement[]>()
     for (const el of bimData.elements) {
       const key = `${el.revit_categorias?.nombre || 'Unknown'}::${el.familia}::${el.tipo}`
@@ -340,6 +354,10 @@ export default function ProyectoDetailPage() {
 
       const metradoTotal = elements.reduce((s, e) => s + (e.metrado_calculado || 0), 0)
 
+      // Suggestions from revit_mapeos matching this category
+      const catId = first.revit_categorias?.id
+      const suggestions = catId ? sugMapeos.filter(m => m.revit_categoria_id === catId) : []
+
       return {
         key,
         categoria: first.revit_categorias?.nombre || 'Unknown',
@@ -353,9 +371,10 @@ export default function ProyectoDetailPage() {
         partida: first.partidas ? { id: first.partidas.id, nombre: first.partidas.nombre, unidad: first.partidas.unidad } : null,
         formula: first.formula_usada,
         metradoTotal,
+        suggestions,
       }
     })
-  }, [bimData?.elements])
+  }, [bimData?.elements, bimData?.suggested_mapeos])
 
   // Filter groups
   const filteredGroups = useMemo(() => {
@@ -826,7 +845,7 @@ export default function ProyectoDetailPage() {
                     : <ChevronRight className="w-5 h-5 text-muted-foreground" />}
                   <Box className="w-5 h-5 text-indigo-600" />
                   <div>
-                    <CardTitle className="text-base">Mapeo BIM</CardTitle>
+                    <CardTitle className="text-base">Mapeo BIM — {proyecto.nombre}</CardTitle>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {latestImport.archivo_nombre} · {elements.length} elementos en {bimGroups.length} grupos · {new Date(latestImport.created_at).toLocaleDateString('es-BO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                     </p>
@@ -1037,6 +1056,39 @@ export default function ProyectoDetailPage() {
                                   <X className="w-4 h-4" />
                                 </Button>
                               </div>
+
+                              {/* Suggested formulas from revit_mapeos */}
+                              {group.suggestions.length > 0 && (
+                                <div>
+                                  <p className="text-[11px] text-muted-foreground mb-1.5">Formulas sugeridas (de mapeos anteriores):</p>
+                                  <div className="flex flex-col gap-1">
+                                    {group.suggestions.map(sug => (
+                                      <button
+                                        key={sug.id}
+                                        onClick={() => {
+                                          setMapFormula(sug.formula)
+                                          if (sug.partidas) {
+                                            setMapSelectedPartida({ id: sug.partidas.id, nombre: sug.partidas.nombre, unidad: sug.partidas.unidad })
+                                            setMapPartidaSearch(sug.partidas.nombre)
+                                          }
+                                        }}
+                                        className="flex items-center gap-3 px-3 py-2 rounded-md bg-background border text-left hover:border-blue-400 hover:bg-blue-50/50 transition-colors"
+                                      >
+                                        <code className="text-xs font-mono font-medium text-blue-700 flex-shrink-0">{sug.formula}</code>
+                                        <span className="text-xs text-muted-foreground truncate">
+                                          {sug.partidas?.nombre || 'Sin partida'}
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                                          ({sug.partidas?.unidad || '?'})
+                                        </span>
+                                        {sug.descripcion && (
+                                          <span className="text-[10px] text-muted-foreground/60 truncate">{sug.descripcion}</span>
+                                        )}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
 
                               {/* Available parameters */}
                               {paramKeys.length > 0 && (

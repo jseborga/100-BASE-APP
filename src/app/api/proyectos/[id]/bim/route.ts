@@ -29,7 +29,7 @@ export async function GET(
     const { data: elements, error: elemErr } = await admin
       .from('bim_elementos')
       .select(`
-        id, revit_id, familia, tipo, parametros,
+        id, revit_id, revit_categoria_id, familia, tipo, parametros,
         metrado_calculado, estado, formula_usada, notas_mapeo,
         partida_codigo, partida_nombre,
         revit_categorias(id, nombre, nombre_es),
@@ -41,11 +41,41 @@ export async function GET(
 
     if (elemErr) throw new Error(elemErr.message)
 
+    // Get unique category IDs from elements to fetch suggested formulas
+    const categoryIds = [...new Set(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (elements || []).map((e: any) => e.revit_categoria_id).filter(Boolean)
+    )] as string[]
+
+    // Fetch suggested formulas from revit_mapeos for these categories
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let suggestedMapeos: any[] = []
+
+    if (categoryIds.length > 0) {
+      const { data: mapeos } = await admin
+        .from('revit_mapeos')
+        .select(`
+          id, revit_categoria_id, formula, parametro_principal,
+          descripcion, condicion_filtro, partida_id,
+          partidas(id, nombre, unidad, capitulo)
+        `)
+        .in('revit_categoria_id', categoryIds)
+        .order('revit_categoria_id')
+        .order('prioridad', { ascending: true })
+
+      suggestedMapeos = (mapeos || []).map((m: Record<string, unknown>) => ({
+        ...m,
+        // Supabase returns FK join as object (single) not array
+        partidas: Array.isArray(m.partidas) ? m.partidas[0] || null : m.partidas,
+      }))
+    }
+
     return NextResponse.json({
       imports,
       elements: elements || [],
       count: elements?.length || 0,
       latest_import_id: latestImportId,
+      suggested_mapeos: suggestedMapeos,
     })
   } catch (err) {
     console.error('BIM GET error:', err)
