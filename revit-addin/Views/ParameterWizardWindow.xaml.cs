@@ -13,6 +13,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using WpfVisibility = System.Windows.Visibility;
 using Autodesk.Revit.DB;
 using RvtConstructionOS.Models;
 using RvtConstructionOS.Services;
@@ -233,7 +234,7 @@ namespace RvtConstructionOS.Views
         {
             if (e.NewValue is not TreeViewItem item || item.Tag is not NodoFamiliaWiz nodo)
             {
-                panelContenido.Visibility = Visibility.Collapsed;
+                panelContenido.Visibility = WpfVisibility.Collapsed;
                 lblFamiliaSeleccionada.Text = "Seleccione una familia";
                 return;
             }
@@ -242,7 +243,7 @@ namespace RvtConstructionOS.Views
             GuardarFamiliaActualEnCache();
 
             _familiaActual = nodo;
-            panelContenido.Visibility = Visibility.Visible;
+            panelContenido.Visibility = WpfVisibility.Visible;
             lblFamiliaSeleccionada.Text = $"{nodo.Categoria} > {nodo.Familia}  ({nodo.CantTipos} tipos, {nodo.CantInst} instancias)";
 
             CargarFamilia(nodo);
