@@ -82,6 +82,7 @@ const ACTIONS: Record<string, ActionHandler> = {
   get_partida_detail: handleGetPartidaDetail,
 
   // --- Write operations ---
+  create_project: handleCreateProject,
   add_partidas_to_project: handleAddPartidasToProject,
   remove_partidas_from_project: handleRemovePartidasFromProject,
   update_metrado: handleUpdateMetrado,
@@ -139,6 +140,10 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
   get_partida_detail: {
     description: 'Get full detail of a catalog partida including all localizaciones and tags',
     params: '{ partida_id: string }',
+  },
+  create_project: {
+    description: 'Create a new project',
+    params: '{ nombre: string, pais_id: string, ubicacion?: string, tipologia?: string, descripcion?: string }',
   },
   add_partidas_to_project: {
     description: 'Add one or more catalog partidas to a project',
@@ -235,6 +240,37 @@ async function handleListProjects(params: Record<string, unknown>) {
   if (error) throw new Error(error.message)
 
   return { projects: data, count: data?.length || 0 }
+}
+
+async function handleCreateProject(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const nombre = params.nombre as string
+  if (!nombre) throw new Error('nombre is required')
+  const pais_id = params.pais_id as string
+  if (!pais_id) throw new Error('pais_id is required (e.g. "BO")')
+
+  // Resolve pais UUID from codigo
+  const { data: pais } = await admin
+    .from('paises')
+    .select('id')
+    .eq('codigo', pais_id)
+    .single()
+  if (!pais) throw new Error(`País "${pais_id}" not found`)
+
+  const { data, error } = await admin
+    .from('proyectos')
+    .insert({
+      nombre,
+      pais_id: pais.id,
+      ubicacion: (params.ubicacion as string) || null,
+      tipologia: (params.tipologia as string) || null,
+      descripcion: (params.descripcion as string) || null,
+      estado: 'activo',
+    })
+    .select('id, nombre, estado')
+    .single()
+  if (error) throw new Error(error.message)
+  return { project: data }
 }
 
 async function handleGetProject(params: Record<string, unknown>) {
