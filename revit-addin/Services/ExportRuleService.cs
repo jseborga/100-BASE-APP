@@ -228,16 +228,59 @@ namespace RvtConstructionOS.Services
             if (string.IsNullOrEmpty(docPath))
                 docPath = doc.Title;
 
-            string hash = Math.Abs(docPath.ToLowerInvariant().GetHashCode()).ToString("X8");
+            string hash = StableHash(docPath.ToLowerInvariant());
             string titulo = Path.GetFileNameWithoutExtension(docPath);
             if (string.IsNullOrEmpty(titulo)) titulo = doc.Title;
+
+            // Sanitizar titulo para nombre de archivo
+            foreach (char c in Path.GetInvalidFileNameChars())
+                titulo = titulo.Replace(c, '_');
 
             string rulesDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "SSA", "RvtConstructionOS", "rules");
             Directory.CreateDirectory(rulesDir);
 
-            return Path.Combine(rulesDir, $"{titulo}_{hash}.json");
+            string newPath = Path.Combine(rulesDir, $"{titulo}_{hash}.json");
+
+            // Migración: si no existe con hash estable, buscar archivo antiguo por patrón
+            if (!File.Exists(newPath))
+            {
+                try
+                {
+                    var candidatos = Directory.GetFiles(rulesDir, $"{titulo}_*.json");
+                    if (candidatos.Length > 0)
+                    {
+                        // Tomar el más reciente y renombrar al nuevo nombre
+                        var masReciente = candidatos
+                            .OrderByDescending(f => File.GetLastWriteTimeUtc(f))
+                            .First();
+                        File.Copy(masReciente, newPath, overwrite: false);
+                    }
+                }
+                catch { /* migración best-effort */ }
+            }
+
+            return newPath;
+        }
+
+        /// <summary>
+        /// Hash determinístico FNV-1a de 32 bits.
+        /// A diferencia de string.GetHashCode(), produce el mismo valor
+        /// en todas las sesiones y versiones de .NET.
+        /// </summary>
+        private static string StableHash(string input)
+        {
+            unchecked
+            {
+                uint hash = 2166136261u;
+                foreach (char c in input)
+                {
+                    hash ^= c;
+                    hash *= 16777619u;
+                }
+                return hash.ToString("X8");
+            }
         }
 
         private static string ObtenerFamilia(ElementType tipo)
