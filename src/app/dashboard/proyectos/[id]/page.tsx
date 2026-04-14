@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -9,8 +9,8 @@ import { Input } from '@/components/ui/input'
 import {
   ArrowLeft, MapPin, Building2, Calendar, Bot, FileSpreadsheet,
   Upload, Trash2, Check, X, Pencil, Plus, ChevronDown, ChevronRight, Download,
-  LayoutTemplate, Loader2, Box, RefreshCw, CheckCircle2, AlertCircle, Clock,
-  Search, GitBranch, Calculator, Layers, Save, Link2, Unlink,
+  LayoutTemplate, Loader2, Box, RefreshCw,
+  Search, Layers, Link2, Unlink,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -124,13 +124,6 @@ interface BimData {
   suggested_mapeos?: SuggestedMapeo[]
 }
 
-const ESTADO_BIM: Record<string, { label: string; icon: typeof Clock; color: string }> = {
-  pendiente: { label: 'Pendiente', icon: Clock, color: 'text-amber-600 bg-amber-50' },
-  mapeado: { label: 'Mapeado', icon: CheckCircle2, color: 'text-blue-600 bg-blue-50' },
-  confirmado: { label: 'Confirmado', icon: Check, color: 'text-green-600 bg-green-50' },
-  sin_match: { label: 'Sin match', icon: AlertCircle, color: 'text-red-600 bg-red-50' },
-}
-
 const ESTADOS: Record<string, { label: string; color: string }> = {
   activo: { label: 'Activo', color: 'bg-emerald-100 text-emerald-800' },
   borrador: { label: 'Borrador', color: 'bg-gray-100 text-gray-700' },
@@ -163,26 +156,12 @@ export default function ProyectoDetailPage() {
   const [bimData, setBimData] = useState<BimData | null>(null)
   const [bimLoading, setBimLoading] = useState(false)
   const [bimOpen, setBimOpen] = useState(false)
-  const [bimConfirming, setBimConfirming] = useState(false)
-  const [bimFilter, setBimFilter] = useState<string>('all')
   const [bimSearch, setBimSearch] = useState('')
-  const [editingBimElement, setEditingBimElement] = useState<string | null>(null)
-  const [editBimMetrado, setEditBimMetrado] = useState('')
   const [activeImportId, setActiveImportId] = useState<string | null>(null)
   const [deletingImport, setDeletingImport] = useState<string | null>(null)
-  const [resettingGroup, setResettingGroup] = useState<string | null>(null)
-  const [resettingImport, setResettingImport] = useState(false)
 
-  // Group mapping state
-  const [mappingGroup, setMappingGroup] = useState<string | null>(null)
-  const [mapFormula, setMapFormula] = useState('')
-  const [mapPartidaSearch, setMapPartidaSearch] = useState('')
-  const [mapPartidaResults, setMapPartidaResults] = useState<{id:string;nombre:string;unidad:string;capitulo:string|null}[]>([])
-  const [mapSelectedPartida, setMapSelectedPartida] = useState<{id:string;nombre:string;unidad:string}|null>(null)
-  const [mapSearching, setMapSearching] = useState(false)
-  const [mapSaving, setMapSaving] = useState(false)
+  // Group expand state
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-  const mapFormRef = useRef<HTMLDivElement>(null)
 
   // Partida → BIM linking state
   const [linkingPartida, setLinkingPartida] = useState<string | null>(null)
@@ -190,18 +169,6 @@ export default function ProyectoDetailPage() {
   const [linkFormula, setLinkFormula] = useState('')
   const [linkSaving, setLinkSaving] = useState(false)
 
-  // Derived rule state
-  const [showDerived, setShowDerived] = useState(false)
-  const [derivedSources, setDerivedSources] = useState<Set<string>>(new Set()) // group keys
-  const [derivedParam, setDerivedParam] = useState('')
-  const [derivedFactor, setDerivedFactor] = useState('1')
-  const [derivedPartidaSearch, setDerivedPartidaSearch] = useState('')
-  const [derivedPartidaResults, setDerivedPartidaResults] = useState<{id:string;nombre:string;unidad:string;capitulo:string|null}[]>([])
-  const [derivedSelectedPartida, setDerivedSelectedPartida] = useState<{id:string;nombre:string;unidad:string}|null>(null)
-  const [derivedSearching, setDerivedSearching] = useState(false)
-  const [derivedSaving, setDerivedSaving] = useState(false)
-  const [derivedNotas, setDerivedNotas] = useState('')
-  const derivedFormRef = useRef<HTMLDivElement>(null)
 
   const fetchData = useCallback(async () => {
     try {
@@ -239,86 +206,6 @@ export default function ProyectoDetailPage() {
     }
   }, [proyectoId])
 
-  const handleBimConfirm = async (elementIds?: string[]) => {
-    if (!activeImportId) return
-    setBimConfirming(true)
-    try {
-      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          importacion_id: activeImportId,
-          elemento_ids: elementIds,
-        }),
-      })
-      if (!res.ok) throw new Error('Error confirming BIM match')
-      await Promise.all([fetchData(), fetchBimData(activeImportId)])
-    } catch (err) {
-      console.error('BIM confirm error:', err)
-    } finally {
-      setBimConfirming(false)
-    }
-  }
-
-  const handleBimUpdateMetrado = async (elementId: string) => {
-    const value = parseFloat(editBimMetrado)
-    if (isNaN(value) || value < 0) return
-    try {
-      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ elemento_id: elementId, metrado_override: value }),
-      })
-      if (!res.ok) throw new Error('Error updating metrado')
-      setEditingBimElement(null)
-      await fetchBimData()
-    } catch (err) {
-      console.error('BIM update error:', err)
-    }
-  }
-
-  const handleResetGroup = async (group: BimGroup) => {
-    if (!activeImportId) return
-    setResettingGroup(group.key)
-    try {
-      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'reset_group',
-          importacion_id: activeImportId,
-          revit_categoria_id: group.categoriaId,
-          familia: group.familia,
-          tipo: group.tipo,
-        }),
-      })
-      if (!res.ok) throw new Error('Error resetting group')
-      await fetchBimData(activeImportId)
-    } catch (err) {
-      console.error('Reset group error:', err)
-    } finally {
-      setResettingGroup(null)
-    }
-  }
-
-  const handleResetImport = async () => {
-    if (!activeImportId) return
-    setResettingImport(true)
-    try {
-      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reset_import', importacion_id: activeImportId }),
-      })
-      if (!res.ok) throw new Error('Error resetting import')
-      await Promise.all([fetchData(), fetchBimData(activeImportId)])
-    } catch (err) {
-      console.error('Reset import error:', err)
-    } finally {
-      setResettingImport(false)
-    }
-  }
-
   const handleDeleteImport = async (importId: string) => {
     try {
       const res = await fetch(`/api/proyectos/${proyectoId}/bim?import_id=${importId}`, {
@@ -335,138 +222,11 @@ export default function ProyectoDetailPage() {
 
   const handleSwitchImport = (importId: string) => {
     setActiveImportId(importId)
-    setMappingGroup(null)
     setExpandedGroups(new Set())
-    setBimFilter('all')
     fetchBimData(importId)
   }
 
-  // Partida search for group mapping
-  useEffect(() => {
-    if (mapPartidaSearch.length < 2) { setMapPartidaResults([]); return }
-    const t = setTimeout(async () => {
-      setMapSearching(true)
-      try {
-        const res = await fetch('/api/mapeos/partidas?q=' + encodeURIComponent(mapPartidaSearch))
-        if (res.ok) { const d = await res.json(); setMapPartidaResults(d.partidas || []) }
-      } catch { /* */ }
-      finally { setMapSearching(false) }
-    }, 300)
-    return () => clearTimeout(t)
-  }, [mapPartidaSearch])
 
-  // Partida search for derived rules
-  useEffect(() => {
-    if (derivedPartidaSearch.length < 2) { setDerivedPartidaResults([]); return }
-    const t = setTimeout(async () => {
-      setDerivedSearching(true)
-      try {
-        const res = await fetch('/api/mapeos/partidas?q=' + encodeURIComponent(derivedPartidaSearch))
-        if (res.ok) { const d = await res.json(); setDerivedPartidaResults(d.partidas || []) }
-      } catch { /* */ }
-      finally { setDerivedSearching(false) }
-    }, 300)
-    return () => clearTimeout(t)
-  }, [derivedPartidaSearch])
-
-  // Scroll to forms
-  useEffect(() => {
-    if (mappingGroup && mapFormRef.current) {
-      setTimeout(() => mapFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100)
-    }
-  }, [mappingGroup])
-
-  useEffect(() => {
-    if (showDerived && derivedFormRef.current) {
-      setTimeout(() => derivedFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100)
-    }
-  }, [showDerived])
-
-  const handleApplyDerived = async () => {
-    if (!derivedSelectedPartida || !derivedCalculation || derivedCalculation.result <= 0) return
-    setDerivedSaving(true)
-    try {
-      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'apply_derived',
-          partida_id: derivedSelectedPartida.id,
-          metrado: derivedCalculation.result,
-          notas: derivedNotas || `Derivado BIM: ${derivedParam} de ${derivedSources.size} grupo(s) x ${derivedFactor}`,
-        }),
-      })
-      if (!res.ok) throw new Error('Error applying derived rule')
-      // Reset form
-      setShowDerived(false)
-      setDerivedSources(new Set())
-      setDerivedParam('')
-      setDerivedFactor('1')
-      setDerivedSelectedPartida(null)
-      setDerivedPartidaSearch('')
-      setDerivedNotas('')
-      await fetchData()
-    } catch (err) {
-      console.error('Derived apply error:', err)
-    } finally {
-      setDerivedSaving(false)
-    }
-  }
-
-  const toggleDerivedSource = (key: string) => {
-    setDerivedSources(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
-
-  const handleGroupMap = async (group: BimGroup) => {
-    if (!mapSelectedPartida || !mapFormula.trim() || !activeImportId) return
-    setMapSaving(true)
-    try {
-      const res = await fetch(`/api/proyectos/${proyectoId}/bim`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          importacion_id: activeImportId,
-          revit_categoria_id: group.categoriaId,
-          familia: group.familia,
-          tipo: group.tipo,
-          partida_id: mapSelectedPartida.id,
-          formula: mapFormula,
-        }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        throw new Error(d.error || 'Error mapping group')
-      }
-      // Reset form and reload
-      setMappingGroup(null)
-      setMapFormula('')
-      setMapSelectedPartida(null)
-      setMapPartidaSearch('')
-      await fetchBimData(activeImportId || undefined)
-    } catch (err) {
-      console.error('Group map error:', err)
-    } finally {
-      setMapSaving(false)
-    }
-  }
-
-  const startMapping = (groupKey: string, group: BimGroup) => {
-    setMappingGroup(groupKey)
-    setMapFormula('')
-    if (group.partida) {
-      setMapSelectedPartida(group.partida)
-      setMapPartidaSearch(group.partida.nombre)
-    } else {
-      setMapSelectedPartida(null)
-      setMapPartidaSearch('')
-    }
-    setMapPartidaResults([])
-  }
 
   // --- Partida → BIM linking ---
   const startLinkBim = (partidaId: string) => {
@@ -660,53 +420,17 @@ export default function ProyectoDetailPage() {
     })
   }, [bimData?.elements, bimData?.suggested_mapeos])
 
-  // Compute derived metrado from selected groups + param
-  const derivedCalculation = useMemo(() => {
-    if (derivedSources.size === 0 || !derivedParam) return null
-    const selectedGroups = bimGroups.filter(g => derivedSources.has(g.key))
-    let total = 0
-    let count = 0
-    for (const g of selectedGroups) {
-      for (const el of g.elements) {
-        const val = el.parametros?.[derivedParam]
-        if (typeof val === 'number' && val > 0) {
-          total += val
-          count++
-        }
-      }
-    }
-    const factor = parseFloat(derivedFactor) || 1
-    return { total, count, factor, result: total * factor }
-  }, [derivedSources, derivedParam, derivedFactor, bimGroups])
-
-  // Get all unique params across all groups (for derived param selector)
-  const allAvailableParams = useMemo(() => {
-    const params = new Set<string>()
-    for (const g of bimGroups) {
-      for (const k of Object.keys(g.sampleParams)) {
-        if (g.sampleParams[k] > 0) params.add(k)
-      }
-    }
-    return Array.from(params).sort()
-  }, [bimGroups])
-
-  // Filter groups
+  // Filter groups by search
   const filteredGroups = useMemo(() => {
-    let groups = bimGroups
-    if (bimFilter !== 'all') {
-      groups = groups.filter(g => g.estado === bimFilter)
-    }
-    if (bimSearch) {
-      const s = bimSearch.toLowerCase()
-      groups = groups.filter(g =>
-        g.familia.toLowerCase().includes(s) ||
-        g.tipo.toLowerCase().includes(s) ||
-        g.categoriaEs.toLowerCase().includes(s) ||
-        g.partida?.nombre?.toLowerCase().includes(s)
-      )
-    }
-    return groups
-  }, [bimGroups, bimFilter, bimSearch])
+    if (!bimSearch) return bimGroups
+    const s = bimSearch.toLowerCase()
+    return bimGroups.filter(g =>
+      g.familia.toLowerCase().includes(s) ||
+      g.tipo.toLowerCase().includes(s) ||
+      g.categoriaEs.toLowerCase().includes(s) ||
+      g.partida?.nombre?.toLowerCase().includes(s)
+    )
+  }, [bimGroups, bimSearch])
 
   // Test formula with sample params
   const testFormula = (formula: string, params: Record<string, number>): string | null => {
@@ -1138,16 +862,13 @@ export default function ProyectoDetailPage() {
         </Card>
       )}
 
-      {/* BIM Section */}
+      {/* BIM Section — read-only view of imported data from Revit */}
       <div id="bim-section" />
       {bimData && bimData.imports.length > 0 && (() => {
         const elements = bimData.elements || []
-        const mapeados = elements.filter(e => e.estado === 'mapeado').length
-        const confirmados = elements.filter(e => e.estado === 'confirmado').length
-        const pendientes = elements.filter(e => e.estado === 'pendiente').length
-        const sinMatch = elements.filter(e => e.estado === 'sin_match').length
+        const vinculados = bimGroups.filter(g => g.partida !== null).length
+        const sinVincular = bimGroups.filter(g => g.partida === null).length
         const activeImport = bimData.imports.find(i => i.id === activeImportId) || bimData.imports[0]
-        const hasMappedOrConfirmed = mapeados > 0 || confirmados > 0
 
         return (
           <Card>
@@ -1162,31 +883,21 @@ export default function ProyectoDetailPage() {
                     : <ChevronRight className="w-5 h-5 text-muted-foreground" />}
                   <Box className="w-5 h-5 text-indigo-600" />
                   <div>
-                    <CardTitle className="text-base">Mapeo BIM</CardTitle>
+                    <CardTitle className="text-base">Elementos BIM</CardTitle>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {bimData.imports.length} importacion{bimData.imports.length !== 1 ? 'es' : ''} · {elements.length} elementos en {bimGroups.length} grupos
+                      {elements.length} elementos en {bimGroups.length} grupos · Vincular desde partidas abajo
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {confirmados > 0 && (
+                  {vinculados > 0 && (
                     <Badge variant="outline" className="text-green-600 bg-green-50 text-[10px]">
-                      {confirmados} confirmados
+                      {vinculados} vinculados
                     </Badge>
                   )}
-                  {mapeados > 0 && (
-                    <Badge variant="outline" className="text-blue-600 bg-blue-50 text-[10px]">
-                      {mapeados} mapeados
-                    </Badge>
-                  )}
-                  {pendientes > 0 && (
+                  {sinVincular > 0 && (
                     <Badge variant="outline" className="text-amber-600 bg-amber-50 text-[10px]">
-                      {pendientes} pendientes
-                    </Badge>
-                  )}
-                  {sinMatch > 0 && (
-                    <Badge variant="outline" className="text-red-600 bg-red-50 text-[10px]">
-                      {sinMatch} sin match
+                      {sinVincular} sin vincular
                     </Badge>
                   )}
                 </div>
@@ -1272,106 +983,42 @@ export default function ProyectoDetailPage() {
                   )}
                 </div>
 
-                {/* Filter tabs + Actions */}
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
-                    {[
-                      { key: 'all', label: 'Todos', count: bimGroups.length },
-                      { key: 'pendiente', label: 'Pendientes', count: bimGroups.filter(g => g.estado === 'pendiente').length },
-                      { key: 'mapeado', label: 'Mapeados', count: bimGroups.filter(g => g.estado === 'mapeado').length },
-                      { key: 'confirmado', label: 'Confirmados', count: bimGroups.filter(g => g.estado === 'confirmado').length },
-                      { key: 'sin_match', label: 'Sin match', count: bimGroups.filter(g => g.estado === 'sin_match').length },
-                    ].filter(t => t.key === 'all' || t.count > 0).map(tab => (
-                      <button
-                        key={tab.key}
-                        onClick={() => setBimFilter(tab.key)}
-                        className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                          bimFilter === tab.key
-                            ? 'bg-background shadow-sm text-foreground'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        {tab.label} ({tab.count})
-                      </button>
-                    ))}
-                  </div>
-
+                {/* Search + Refresh */}
+                <div className="flex items-center gap-2">
                   <div className="relative flex-1 max-w-xs">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                     <Input
-                      placeholder="Buscar familia, tipo, partida..."
+                      placeholder="Buscar familia, tipo..."
                       value={bimSearch}
                       onChange={e => setBimSearch(e.target.value)}
                       className="h-8 pl-8 text-xs"
                     />
                   </div>
-
-                  <div className="ml-auto flex gap-2">
-                    {hasMappedOrConfirmed && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 gap-1.5 text-xs text-amber-700 hover:text-amber-800 border-amber-200 hover:border-amber-300 hover:bg-amber-50"
-                        onClick={handleResetImport}
-                        disabled={resettingImport}
-                      >
-                        {resettingImport ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        )}
-                        Liberar todo
-                      </Button>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1.5 text-xs"
-                      onClick={() => fetchBimData(activeImportId || undefined)}
-                      disabled={bimLoading}
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${bimLoading ? 'animate-spin' : ''}`} />
-                      Actualizar
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1.5 text-xs text-violet-700 border-violet-200 hover:bg-violet-50"
-                      onClick={() => setShowDerived(!showDerived)}
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Regla derivada
-                    </Button>
-                    {mapeados > 0 && (
-                      <Button
-                        size="sm"
-                        className="h-8 gap-1.5 text-xs"
-                        onClick={() => handleBimConfirm()}
-                        disabled={bimConfirming}
-                      >
-                        {bimConfirming ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                        )}
-                        Confirmar {mapeados} mapeados
-                      </Button>
-                    )}
-                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5 text-xs"
+                    onClick={() => fetchBimData(activeImportId || undefined)}
+                    disabled={bimLoading}
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${bimLoading ? 'animate-spin' : ''}`} />
+                    Actualizar
+                  </Button>
+                  <p className="text-[11px] text-muted-foreground ml-auto">
+                    Para vincular, usa el boton <Link2 className="w-3 h-3 inline" /> en cada partida abajo
+                  </p>
                 </div>
 
-                {/* Grouped elements */}
-                <div className="space-y-2">
+                {/* BIM Groups list — read-only, linking is done from partidas */}
+                <div className="space-y-1.5">
                   {filteredGroups.length === 0 ? (
                     <div className="py-8 text-center text-sm text-muted-foreground">
                       {bimSearch ? 'No se encontraron grupos' : 'No hay elementos en esta importación'}
                     </div>
                   ) : (
                     filteredGroups.map(group => {
-                      const estadoInfo = ESTADO_BIM[group.estado] || ESTADO_BIM.pendiente
-                      const EstadoIcon = estadoInfo.icon
                       const isExpanded = expandedGroups.has(group.key)
-                      const isMapping = mappingGroup === group.key
+                      const isLinked = group.partida !== null
                       const paramKeys = Object.keys(group.sampleParams).filter(k =>
                         typeof group.sampleParams[k] === 'number' && group.sampleParams[k] > 0
                       )
@@ -1380,18 +1027,16 @@ export default function ProyectoDetailPage() {
                         <div key={group.key} className="border rounded-lg overflow-hidden">
                           {/* Group header */}
                           <div
-                            className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors ${
-                              group.estado === 'pendiente' ? 'bg-amber-50/50 hover:bg-amber-50' :
-                              group.estado === 'mapeado' ? 'bg-blue-50/50 hover:bg-blue-50' :
-                              group.estado === 'confirmado' ? 'bg-green-50/50 hover:bg-green-50' :
-                              'bg-red-50/50 hover:bg-red-50'
+                            onClick={() => toggleGroup(group.key)}
+                            className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors ${
+                              isLinked ? 'bg-green-50/50 hover:bg-green-50' : 'bg-muted/30 hover:bg-muted/50'
                             }`}
                           >
-                            <button onClick={() => toggleGroup(group.key)} className="flex-shrink-0">
+                            <div className="flex-shrink-0">
                               {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
-                            </button>
+                            </div>
 
-                            <div className="flex-1 min-w-0" onClick={() => toggleGroup(group.key)}>
+                            <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">{group.categoriaEs}</span>
                                 <span className="text-xs text-muted-foreground">/</span>
@@ -1399,13 +1044,8 @@ export default function ProyectoDetailPage() {
                                 <span className="text-xs text-muted-foreground">/</span>
                                 <span className="text-sm truncate">{group.tipo}</span>
                               </div>
-                              {group.partida && (
-                                <p className="text-xs text-blue-700 mt-0.5">{group.partida.nombre}</p>
-                              )}
-                              {group.notaFamilia && (
-                                <p className="text-[10px] text-violet-600 mt-0.5 italic truncate" title={group.notaFamilia}>
-                                  IA: {group.notaFamilia}
-                                </p>
+                              {isLinked && (
+                                <p className="text-xs text-green-700 mt-0.5">Vinculado a: {group.partida!.nombre}</p>
                               )}
                             </div>
 
@@ -1414,249 +1054,30 @@ export default function ProyectoDetailPage() {
                                 <Layers className="w-3 h-3 mr-1" />
                                 {group.elements.length}
                               </Badge>
-                              {group.metradoTotal > 0 && (
-                                <span className="text-xs font-mono font-medium">
-                                  {group.metradoTotal.toFixed(2)} {group.partida?.unidad || ''}
+                              {/* Show key params inline */}
+                              {paramKeys.slice(0, 3).map(k => (
+                                <span key={k} className="text-[10px] font-mono text-indigo-600">
+                                  {k}={group.sampleParams[k] % 1 === 0 ? group.sampleParams[k] : group.sampleParams[k].toFixed(1)}
                                 </span>
+                              ))}
+                              {paramKeys.length > 3 && (
+                                <span className="text-[10px] text-muted-foreground">+{paramKeys.length - 3}</span>
                               )}
-                              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${estadoInfo.color}`}>
-                                <EstadoIcon className="w-3 h-3" />
-                                {estadoInfo.label}
-                              </span>
-
-                              {/* Action buttons */}
-                              {group.estado === 'pendiente' || group.estado === 'sin_match' ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-7 gap-1 text-xs"
-                                  onClick={(e) => { e.stopPropagation(); startMapping(group.key, group) }}
-                                >
-                                  <Calculator className="w-3 h-3" />
-                                  Mapear
-                                </Button>
-                              ) : group.estado === 'mapeado' ? (
-                                <div className="flex gap-1">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-7 gap-1 text-xs text-amber-700 hover:text-amber-800 hover:bg-amber-50"
-                                    onClick={(e) => { e.stopPropagation(); handleResetGroup(group) }}
-                                    disabled={resettingGroup === group.key}
-                                    title="Liberar mapeo de este grupo"
-                                  >
-                                    {resettingGroup === group.key ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                                    Liberar
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-7 gap-1 text-xs"
-                                    onClick={(e) => { e.stopPropagation(); startMapping(group.key, group) }}
-                                  >
-                                    <Pencil className="w-3 h-3" />
-                                    Editar
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    className="h-7 gap-1 text-xs"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleBimConfirm(group.elements.map(el => el.id))
-                                    }}
-                                    disabled={bimConfirming}
-                                  >
-                                    <CheckCircle2 className="w-3 h-3" />
-                                    Confirmar
-                                  </Button>
-                                </div>
-                              ) : group.estado === 'confirmado' ? (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 gap-1 text-xs text-amber-700 hover:text-amber-800 hover:bg-amber-50"
-                                  onClick={(e) => { e.stopPropagation(); handleResetGroup(group) }}
-                                  disabled={resettingGroup === group.key}
-                                  title="Liberar mapeo confirmado"
-                                >
-                                  {resettingGroup === group.key ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                                  Liberar
-                                </Button>
-                              ) : null}
+                              {isLinked ? (
+                                <Badge variant="outline" className="text-green-600 bg-green-50 text-[10px]">Vinculado</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-amber-600 bg-amber-50 text-[10px]">Sin vincular</Badge>
+                              )}
                             </div>
                           </div>
 
-                          {/* Inline mapping form */}
-                          {isMapping && (
-                            <div ref={mapFormRef} className="border-t bg-muted/30 p-4 space-y-3">
-                              <div className="flex items-center justify-between">
-                                <h4 className="text-sm font-medium flex items-center gap-2">
-                                  <Calculator className="w-4 h-4 text-indigo-600" />
-                                  Mapear {group.elements.length} elementos: {group.familia} / {group.tipo}
-                                </h4>
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setMappingGroup(null)}>
-                                  <X className="w-4 h-4" />
-                                </Button>
-                              </div>
-
-                              {/* Suggested formulas from revit_mapeos */}
-                              {group.suggestions.length > 0 && (
-                                <div>
-                                  <p className="text-[11px] text-muted-foreground mb-1.5">Formulas sugeridas (de mapeos anteriores):</p>
-                                  <div className="flex flex-col gap-1">
-                                    {group.suggestions.map(sug => (
-                                      <button
-                                        key={sug.id}
-                                        onClick={() => {
-                                          setMapFormula(sug.formula)
-                                          if (sug.partidas) {
-                                            setMapSelectedPartida({ id: sug.partidas.id, nombre: sug.partidas.nombre, unidad: sug.partidas.unidad })
-                                            setMapPartidaSearch(sug.partidas.nombre)
-                                          }
-                                        }}
-                                        className="flex items-center gap-3 px-3 py-2 rounded-md bg-background border text-left hover:border-blue-400 hover:bg-blue-50/50 transition-colors"
-                                      >
-                                        <code className="text-xs font-mono font-medium text-blue-700 flex-shrink-0">{sug.formula}</code>
-                                        <span className="text-xs text-muted-foreground truncate">
-                                          {sug.partidas?.nombre || 'Sin partida'}
-                                        </span>
-                                        <span className="text-[10px] text-muted-foreground flex-shrink-0">
-                                          ({sug.partidas?.unidad || '?'})
-                                        </span>
-                                        {sug.descripcion && (
-                                          <span className="text-[10px] text-muted-foreground/60 truncate">{sug.descripcion}</span>
-                                        )}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Available parameters */}
-                              {paramKeys.length > 0 && (
-                                <div>
-                                  <p className="text-[11px] text-muted-foreground mb-1.5">Parametros disponibles (click para insertar):</p>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {paramKeys.map(k => (
-                                      <button
-                                        key={k}
-                                        onClick={() => setMapFormula(prev => prev ? `${prev} ${k}` : k)}
-                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-background border text-xs hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
-                                      >
-                                        <span className="font-mono font-medium text-indigo-700">{k}</span>
-                                        <span className="text-muted-foreground">= {group.sampleParams[k]?.toFixed(2)}</span>
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Partida search */}
-                              <div className="grid grid-cols-2 gap-3">
-                                <div className="relative">
-                                  <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Partida destino</label>
-                                  <div className="relative">
-                                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                                    <Input
-                                      placeholder="Buscar partida..."
-                                      value={mapPartidaSearch}
-                                      onChange={e => {
-                                        setMapPartidaSearch(e.target.value)
-                                        if (mapSelectedPartida && e.target.value !== mapSelectedPartida.nombre) {
-                                          setMapSelectedPartida(null)
-                                        }
-                                      }}
-                                      className="h-8 pl-8 text-xs"
-                                      autoFocus
-                                    />
-                                    {mapSearching && <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-muted-foreground" />}
-                                  </div>
-                                  {mapPartidaResults.length > 0 && !mapSelectedPartida && (
-                                    <div className="absolute z-10 mt-1 w-full bg-background border rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                                      {mapPartidaResults.map(p => (
-                                        <button
-                                          key={p.id}
-                                          onClick={() => {
-                                            setMapSelectedPartida({ id: p.id, nombre: p.nombre, unidad: p.unidad })
-                                            setMapPartidaSearch(p.nombre)
-                                            setMapPartidaResults([])
-                                          }}
-                                          className="w-full text-left px-3 py-2 hover:bg-muted transition-colors text-xs"
-                                        >
-                                          <span className="font-medium">{p.nombre}</span>
-                                          <span className="text-muted-foreground ml-2">({p.unidad})</span>
-                                          {p.capitulo && <span className="text-muted-foreground ml-1">· {p.capitulo}</span>}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {mapSelectedPartida && (
-                                    <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1">
-                                      <CheckCircle2 className="w-3 h-3" />
-                                      {mapSelectedPartida.nombre} ({mapSelectedPartida.unidad})
-                                    </p>
-                                  )}
-                                </div>
-
-                                {/* Formula */}
-                                <div>
-                                  <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Formula</label>
-                                  <Input
-                                    placeholder="Ej: Area * 1.05, Volume, Count"
-                                    value={mapFormula}
-                                    onChange={e => setMapFormula(e.target.value)}
-                                    className="h-8 text-xs font-mono"
-                                  />
-                                  {mapFormula && (
-                                    <p className={`text-[10px] mt-1 font-mono ${
-                                      testFormula(mapFormula, group.sampleParams)?.startsWith('=')
-                                        ? 'text-green-600'
-                                        : 'text-red-500'
-                                    }`}>
-                                      {testFormula(mapFormula, group.sampleParams) || ''}
-                                      {testFormula(mapFormula, group.sampleParams)?.startsWith('=') && mapSelectedPartida && (
-                                        <span className="text-muted-foreground"> {mapSelectedPartida.unidad} (por elemento)</span>
-                                      )}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Actions */}
-                              <div className="flex items-center justify-between pt-1">
-                                <p className="text-[10px] text-muted-foreground">
-                                  Se aplicara la formula a {group.elements.length} elemento{group.elements.length !== 1 ? 's' : ''} de este grupo
-                                </p>
-                                <div className="flex gap-2">
-                                  <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setMappingGroup(null)}>
-                                    Cancelar
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    className="h-8 gap-1.5 text-xs"
-                                    disabled={!mapSelectedPartida || !mapFormula.trim() || mapSaving || testFormula(mapFormula, group.sampleParams)?.startsWith('Error')}
-                                    onClick={() => handleGroupMap(group)}
-                                  >
-                                    {mapSaving ? (
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    ) : (
-                                      <Save className="w-3.5 h-3.5" />
-                                    )}
-                                    Mapear {group.elements.length} elementos
-                                  </Button>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Expanded: show individual elements + group params summary */}
+                          {/* Expanded: show params + elements */}
                           {isExpanded && (
                             <div className="border-t">
-                              {/* Group parameters summary */}
-                              <div className="bg-muted/20 px-3 py-2 border-b space-y-2">
+                              <div className="bg-muted/20 px-3 py-2 space-y-2">
                                 {/* Numeric parameters */}
                                 <div>
-                                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Parametros ({Object.keys(group.sampleParams).filter(k => group.sampleParams[k] > 0).length})</p>
+                                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Parametros ({paramKeys.length})</p>
                                   <div className="flex flex-wrap gap-1">
                                     {Object.entries(group.sampleParams)
                                       .filter(([, v]) => v > 0)
@@ -1686,88 +1107,24 @@ export default function ProyectoDetailPage() {
                                   </div>
                                 )}
                                 {/* AI Notes */}
-                                {Object.keys(group.notasIA).length > 0 && (
-                                  <div>
-                                    <p className="text-[10px] font-medium text-violet-600 uppercase tracking-wider mb-1">Notas IA</p>
-                                    <div className="flex flex-col gap-0.5">
-                                      {Object.entries(group.notasIA).map(([k, v]) => (
-                                        <span key={k} className="text-[10px] text-violet-700">
-                                          <span className="font-mono font-medium">{k}:</span> {v}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
+                                {group.notaFamilia && (
+                                  <p className="text-[10px] text-violet-600 italic">IA: {group.notaFamilia}</p>
                                 )}
                               </div>
 
-                              {/* Elements table */}
-                              <div className="grid grid-cols-[1fr_1fr_100px_80px_80px] gap-2 px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider bg-muted/30 border-b">
-                                <span>Revit ID</span>
-                                <span>Partida</span>
-                                <span className="text-right">Metrado</span>
-                                <span className="text-center">Unidad</span>
-                                <span className="text-center">Estado</span>
-                              </div>
-                              <div className="max-h-[300px] overflow-y-auto divide-y">
-                                {group.elements.map(el => {
-                                  const elEstado = ESTADO_BIM[el.estado] || ESTADO_BIM.pendiente
-                                  const ElIcon = elEstado.icon
-                                  const isEditing = editingBimElement === el.id
-                                  const nivel = el.metadata?.nivel
-                                  return (
-                                    <div key={el.id} className="group/el grid grid-cols-[1fr_1fr_100px_80px_80px] gap-2 items-center px-3 py-1.5 hover:bg-muted/20 transition-colors">
-                                      <div className="min-w-0">
-                                        <p className="text-xs truncate">{el.revit_id}</p>
-                                        {nivel && (
-                                          <p className="text-[10px] text-muted-foreground truncate">Nivel: {nivel}</p>
-                                        )}
-                                      </div>
-                                      <div className="min-w-0">
-                                        {el.partidas ? (
-                                          <p className="text-xs truncate">{el.partidas.nombre}</p>
-                                        ) : (
-                                          <span className="text-[10px] text-muted-foreground italic">Sin asignar</span>
-                                        )}
-                                      </div>
-                                      <div className="text-right">
-                                        {isEditing ? (
-                                          <div className="flex items-center gap-0.5 justify-end">
-                                            <Input
-                                              type="number" step="0.01" min="0"
-                                              value={editBimMetrado}
-                                              onChange={e => setEditBimMetrado(e.target.value)}
-                                              onKeyDown={e => {
-                                                if (e.key === 'Enter') handleBimUpdateMetrado(el.id)
-                                                if (e.key === 'Escape') setEditingBimElement(null)
-                                              }}
-                                              className="h-5 w-16 text-[10px] text-right"
-                                              autoFocus
-                                            />
-                                            <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => handleBimUpdateMetrado(el.id)}>
-                                              <Check className="w-2.5 h-2.5 text-green-600" />
-                                            </Button>
-                                          </div>
-                                        ) : (
-                                          <button
-                                            onClick={() => { setEditingBimElement(el.id); setEditBimMetrado((el.metrado_calculado ?? 0).toString()) }}
-                                            className="text-xs font-mono hover:text-primary transition-colors"
-                                          >
-                                            {el.metrado_calculado != null ? el.metrado_calculado.toFixed(2) : '—'}
-                                          </button>
-                                        )}
-                                      </div>
-                                      <span className="text-[10px] text-center text-muted-foreground">
-                                        {el.partidas?.unidad || '—'}
-                                      </span>
-                                      <div className="flex justify-center">
-                                        <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium ${elEstado.color}`}>
-                                          <ElIcon className="w-2.5 h-2.5" />
-                                          {elEstado.label}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  )
-                                })}
+                              {/* Elements list */}
+                              <div className="max-h-[200px] overflow-y-auto divide-y">
+                                {group.elements.map(el => (
+                                  <div key={el.id} className="flex items-center gap-3 px-3 py-1.5 text-xs hover:bg-muted/20">
+                                    <span className="font-mono text-muted-foreground truncate w-24">{el.revit_id}</span>
+                                    {el.metadata?.nivel && (
+                                      <span className="text-[10px] text-muted-foreground">Nivel: {el.metadata.nivel}</span>
+                                    )}
+                                    <span className="ml-auto font-mono">
+                                      {el.metrado_calculado != null ? el.metrado_calculado.toFixed(2) : '—'}
+                                    </span>
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           )}
@@ -1776,188 +1133,6 @@ export default function ProyectoDetailPage() {
                     })
                   )}
                 </div>
-
-                {/* Derived Rule Form */}
-                {showDerived && (
-                  <div ref={derivedFormRef} className="border rounded-lg bg-violet-50/50 p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-sm font-medium flex items-center gap-2">
-                        <Plus className="w-4 h-4 text-violet-600" />
-                        Nueva regla derivada
-                      </h4>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowDerived(false)}>
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      Crea una partida derivada sumando un parametro de los grupos seleccionados. Ej: dintel = suma de anchos de puertas + ventanas, zocalos = longitud de muros.
-                    </p>
-
-                    {/* Source groups */}
-                    <div>
-                      <p className="text-[11px] font-medium text-muted-foreground mb-1.5">Grupos origen (selecciona uno o varios):</p>
-                      <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-                        {bimGroups.map(g => (
-                          <button
-                            key={g.key}
-                            onClick={() => toggleDerivedSource(g.key)}
-                            className={`px-2.5 py-1.5 rounded-md text-xs border transition-colors ${
-                              derivedSources.has(g.key)
-                                ? 'bg-violet-100 border-violet-400 text-violet-800 font-medium'
-                                : 'bg-background border-border text-muted-foreground hover:border-violet-300'
-                            }`}
-                          >
-                            <span>{g.categoriaEs}</span>
-                            <span className="mx-1 opacity-40">/</span>
-                            <span>{g.tipo}</span>
-                            <span className="ml-1 opacity-50">({g.elements.length})</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Parameter + Factor */}
-                    <div className="grid grid-cols-3 gap-3">
-                      <div>
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Parametro a sumar</label>
-                        <select
-                          value={derivedParam}
-                          onChange={e => setDerivedParam(e.target.value)}
-                          className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs"
-                        >
-                          <option value="">Seleccionar...</option>
-                          {allAvailableParams.map(p => (
-                            <option key={p} value={p}>{p}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Factor / multiplicador</label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={derivedFactor}
-                          onChange={e => setDerivedFactor(e.target.value)}
-                          className="h-8 text-xs"
-                          placeholder="1.05"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Preview</label>
-                        {derivedCalculation ? (
-                          <div className="h-8 flex items-center text-xs">
-                            <span className="font-mono text-green-700 font-medium">
-                              = {derivedCalculation.result.toFixed(2)}
-                            </span>
-                            <span className="text-muted-foreground ml-2">
-                              ({derivedCalculation.count} elem, sum={derivedCalculation.total.toFixed(2)} x {derivedCalculation.factor})
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="h-8 flex items-center text-[11px] text-muted-foreground">
-                            Selecciona grupos y parametro
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Partida search + notas */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="relative">
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Partida destino</label>
-                        <div className="relative">
-                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                          <Input
-                            placeholder="Buscar partida..."
-                            value={derivedPartidaSearch}
-                            onChange={e => {
-                              setDerivedPartidaSearch(e.target.value)
-                              if (derivedSelectedPartida && e.target.value !== derivedSelectedPartida.nombre) {
-                                setDerivedSelectedPartida(null)
-                              }
-                            }}
-                            className="h-8 pl-8 text-xs"
-                          />
-                          {derivedSearching && <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-muted-foreground" />}
-                        </div>
-                        {derivedPartidaResults.length > 0 && !derivedSelectedPartida && (
-                          <div className="absolute z-10 mt-1 w-full bg-background border rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                            {derivedPartidaResults.map(p => (
-                              <button
-                                key={p.id}
-                                onClick={() => {
-                                  setDerivedSelectedPartida({ id: p.id, nombre: p.nombre, unidad: p.unidad })
-                                  setDerivedPartidaSearch(p.nombre)
-                                  setDerivedPartidaResults([])
-                                }}
-                                className="w-full text-left px-3 py-2 hover:bg-muted transition-colors text-xs"
-                              >
-                                <span className="font-medium">{p.nombre}</span>
-                                <span className="text-muted-foreground ml-2">({p.unidad})</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {derivedSelectedPartida && (
-                          <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3" />
-                            {derivedSelectedPartida.nombre} ({derivedSelectedPartida.unidad})
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="text-[11px] font-medium text-muted-foreground mb-1 block">Notas (opcional)</label>
-                        <Input
-                          placeholder="Ej: Dintel sobre puertas y ventanas"
-                          value={derivedNotas}
-                          onChange={e => setDerivedNotas(e.target.value)}
-                          className="h-8 text-xs"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center justify-between pt-1">
-                      <p className="text-[10px] text-muted-foreground">
-                        {derivedSources.size > 0 && derivedParam
-                          ? `Sumando ${derivedParam} de ${derivedSources.size} grupo(s)`
-                          : 'Selecciona grupos y un parametro para calcular'}
-                      </p>
-                      <div className="flex gap-2">
-                        <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setShowDerived(false)}>
-                          Cancelar
-                        </Button>
-                        <Button
-                          size="sm"
-                          className="h-8 gap-1.5 text-xs"
-                          disabled={!derivedSelectedPartida || !derivedCalculation || derivedCalculation.result <= 0 || derivedSaving}
-                          onClick={handleApplyDerived}
-                        >
-                          {derivedSaving ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Save className="w-3.5 h-3.5" />
-                          )}
-                          Aplicar {derivedCalculation ? derivedCalculation.result.toFixed(2) : '0'} {derivedSelectedPartida?.unidad || ''} a partidas
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Summary */}
-                {elements.length > 0 && (
-                  <div className="flex items-center justify-between text-xs text-muted-foreground pt-1">
-                    <span>
-                      {filteredGroups.length} grupo{filteredGroups.length !== 1 ? 's' : ''} · {filteredGroups.reduce((s, g) => s + g.elements.length, 0)} elementos
-                      {bimSearch && ` (filtro: "${bimSearch}")`}
-                    </span>
-                    <span>
-                      Metrado total: {filteredGroups.reduce((s, g) => s + g.metradoTotal, 0).toFixed(2)}
-                    </span>
-                  </div>
-                )}
               </CardContent>
             )}
           </Card>
@@ -2107,7 +1282,7 @@ export default function ProyectoDetailPage() {
                         const codigoLocal = p.partidas?.partida_localizaciones?.[0]?.codigo_local || ''
                         const hasBimData = bimData && bimData.imports.length > 0
                         const linkedGroups = hasBimData ? getLinkedGroups(p.partida_id) : []
-                        const isLinking = linkingPartida === p.id
+                        const isLinking = linkingPartida === p.partida_id
 
                         return (
                           <div key={p.id}>
