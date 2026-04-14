@@ -1257,16 +1257,24 @@ async function handleUpdateBimElements(params: Record<string, unknown>) {
     }
   }
 
-  // Load existing elements, indexed by unique_id
+  // Load existing elements, indexed by unique_id (preserve formula for recalculation)
   const { data: existingElements } = await admin
     .from('bim_elementos')
     .select('id, parametros, partida_id, estado')
     .eq('importacion_id', importacion_id)
 
-  const existingByUniqueId = new Map<string, { id: string; partida_id: string | null; estado: string }>()
+  const existingByUniqueId = new Map<string, {
+    id: string; partida_id: string | null; estado: string;
+    formula: string | null; parametros: Record<string, unknown>
+  }>()
   for (const el of existingElements || []) {
-    const uid = (el.parametros as Record<string, unknown>)?._unique_id as string
-    if (uid) existingByUniqueId.set(uid, { id: el.id, partida_id: el.partida_id, estado: el.estado })
+    const params = (el.parametros || {}) as Record<string, unknown>
+    const uid = params._unique_id as string
+    if (uid) existingByUniqueId.set(uid, {
+      id: el.id, partida_id: el.partida_id, estado: el.estado,
+      formula: (params._formula as string) || null,
+      parametros: params,
+    })
   }
 
   let updated = 0, inserted = 0, removed = 0, preservedLinks = 0
@@ -1292,7 +1300,7 @@ async function handleUpdateBimElements(params: Record<string, unknown>) {
 
   // Process updates and inserts
   const toInsert: Array<Record<string, unknown>> = []
-  const toUpdate: Array<{ id: string; data: Record<string, unknown> }> = []
+  const toUpdate: Array<{ id: string; partida_id: string | null; formula: string | null; data: Record<string, unknown> }> = []
 
   for (const e of elementos) {
     if (e.unique_id) incomingUniqueIds.add(e.unique_id)
@@ -1301,8 +1309,13 @@ async function handleUpdateBimElements(params: Record<string, unknown>) {
     const existing = e.unique_id ? existingByUniqueId.get(e.unique_id) : null
 
     if (existing) {
+      // Preserve _formula from previous mapping for recalculation
+      if (existing.formula) allParams._formula = existing.formula
+
       toUpdate.push({
         id: existing.id,
+        partida_id: existing.partida_id,
+        formula: existing.formula,
         data: {
           parametros: allParams,
           familia: e.familia || null,
@@ -1350,6 +1363,53 @@ async function handleUpdateBimElements(params: Record<string, unknown>) {
     }
   }
 
+  // ── Recalculate metrados for elements with preserved formulas ──
+  let recalculated = 0
+  const affectedPartidas = new Set<string>()
+
+  for (const item of toUpdate) {
+    if (!item.formula || !item.partida_id) continue
+
+    // Extract numeric params from the updated parametros
+    const params = (item.data.parametros || {}) as Record<string, unknown>
+    const numericParams: Record<string, number> = {}
+    for (const [k, v] of Object.entries(params)) {
+      if (!k.startsWith('_') && typeof v === 'number') numericParams[k] = v
+    }
+
+    const metrado = evaluateFormula(item.formula, numericParams)
+    if (metrado !== null) {
+      await admin.from('bim_elementos')
+        .update({ metrado_calculado: metrado })
+        .eq('id', item.id)
+      affectedPartidas.add(item.partida_id)
+      recalculated++
+    }
+  }
+
+  // Aggregate metrado_calculado per partida from ALL elements in this import
+  let partidasUpdated = 0
+  if (affectedPartidas.size > 0 && importacion.proyecto_id) {
+    for (const partidaId of affectedPartidas) {
+      const { data: partidaElems } = await admin
+        .from('bim_elementos')
+        .select('metrado_calculado')
+        .eq('importacion_id', importacion_id)
+        .eq('partida_id', partidaId)
+        .neq('estado', 'eliminado')
+
+      const totalMetrado = (partidaElems || [])
+        .reduce((sum, el) => sum + (Number(el.metrado_calculado) || 0), 0)
+
+      const { error: ppErr } = await admin.from('proyecto_partidas')
+        .update({ metrado_bim: Math.round(totalMetrado * 10000) / 10000 })
+        .eq('proyecto_id', importacion.proyecto_id)
+        .eq('partida_id', partidaId)
+
+      if (!ppErr) partidasUpdated++
+    }
+  }
+
   // Update importacion
   await admin.from('bim_importaciones')
     .update({
@@ -1364,8 +1424,10 @@ async function handleUpdateBimElements(params: Record<string, unknown>) {
     inserted,
     removed,
     preserved_links: preservedLinks,
+    recalculated,
+    partidas_updated: partidasUpdated,
     total_elementos: elementos.length,
-    message: `Updated: ${updated} (${preservedLinks} with links), New: ${inserted}, Removed: ${removed}`,
+    message: `Updated: ${updated} (${preservedLinks} with links), New: ${inserted}, Removed: ${removed}, Recalculated: ${recalculated}, Partidas refreshed: ${partidasUpdated}`,
   }
 }
 

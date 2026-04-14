@@ -54,13 +54,26 @@ namespace RvtConstructionOS.Commands
                     return Result.Succeeded;
                 }
 
-                // Aplicar perfiles de parámetros custom (wizard)
+                // Cargar reglas y aplicar perfiles custom (wizard)
                 var ruleSet = ExportRuleService.Cargar(doc);
                 if (ruleSet.PerfilesParametros.Count > 0)
                 {
                     extractionService.AplicarPerfilesCustom(
                         doc, extractionResult, ruleSet.PerfilesParametros);
                 }
+
+                // Filtrar elementos excluidos por regla (Incluir=false)
+                var indiceReglas = ruleSet.Reglas
+                    .ToDictionary(r => r.TypeUniqueId, r => r, StringComparer.OrdinalIgnoreCase);
+
+                var elementosFiltrados = extractionResult.Elementos
+                    .Where(elem =>
+                    {
+                        if (!indiceReglas.TryGetValue(elem.UniqueId, out var regla))
+                            return true; // Sin regla → incluir por defecto
+                        return regla.Incluir;
+                    })
+                    .ToList();
 
                 // Group openings by host wall UniqueId for N:1 pre-computation
                 var huecosPorMuro = new Dictionary<string, List<BimAbertura>>();
@@ -72,10 +85,18 @@ namespace RvtConstructionOS.Commands
                     huecosPorMuro[ab.GuidHostMuro].Add(ab);
                 }
 
-                // Convert to payloads using BimSerializer (includes boolean flags + opening aggregates)
+                // Convert to payloads using BimSerializer
                 var payloads = new List<BimElementPayload>();
-                foreach (var elem in extractionResult.Elementos)
+                foreach (var elem in elementosFiltrados)
                 {
+                    // Asignar CriterioMedicion de la regla si el elemento no lo tiene
+                    if (string.IsNullOrEmpty(elem.CriterioMedicion) &&
+                        indiceReglas.TryGetValue(elem.UniqueId, out var reglaElem) &&
+                        !string.IsNullOrEmpty(reglaElem.CriterioMedicion))
+                    {
+                        elem.CriterioMedicion = reglaElem.CriterioMedicion;
+                    }
+
                     List<BimAbertura>? wallOpenings = null;
                     if (elem.Categoria == "Muros" && huecosPorMuro.TryGetValue(elem.UniqueId, out var openings))
                         wallOpenings = openings;
@@ -145,6 +166,8 @@ namespace RvtConstructionOS.Commands
                         $"  Nuevos: {result.Inserted}\n" +
                         $"  Eliminados del modelo: {result.Removed}\n" +
                         $"  Vínculos preservados: {result.PreservedLinks}\n" +
+                        $"  Metrados recalculados: {result.Recalculated}\n" +
+                        $"  Partidas actualizadas: {result.PartidasUpdated}\n" +
                         $"  Total elementos: {result.TotalElementos}";
                 }
                 else
@@ -154,13 +177,15 @@ namespace RvtConstructionOS.Commands
                         config.ProyectoId, archivoNombre, payloads))
                         .GetAwaiter().GetResult();
 
-                    int elemConCustom = extractionResult.Elementos
+                    int elemConCustom = elementosFiltrados
                         .Count(e => e.ParametrosCustomValues.Count > 0);
-                    int totalNotas = extractionResult.Elementos
+                    int totalNotas = elementosFiltrados
                         .Sum(e => e.NotasIA.Count);
+                    int excluidos = extractionResult.Elementos.Count - elementosFiltrados.Count;
 
                     resumen = $"Exportación completada:\n\n" +
                         $"  Elementos enviados: {result.TotalElementos}\n" +
+                        (excluidos > 0 ? $"  Excluidos (Incluir=false): {excluidos}\n" : "") +
                         $"  Con categoría válida: {result.ConCategoria}\n" +
                         $"  Sin categoría: {result.SinCategoria}\n" +
                         $"  Con params custom: {elemConCustom}\n" +

@@ -326,12 +326,15 @@ export async function PUT(
       const metrado = evaluateFormula(formula, numericParams)
 
       if (metrado !== null) {
+        // Save _formula in parametros for recalculation on re-export updates
+        const updatedParams = { ...rawParams, _formula: formula }
         const { error: updateErr } = await admin
           .from('bim_elementos')
           .update({
             partida_id: partida_id,
             metrado_calculado: Math.round(metrado * 10000) / 10000,
             estado: 'mapeado',
+            parametros: updatedParams,
           })
           .eq('id', el.id)
 

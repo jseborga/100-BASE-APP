@@ -1191,9 +1191,11 @@ namespace RvtConstructionOS.Services
         /// </summary>
         private static Dictionary<string, double> BuildValoresBase(BimElement elem)
         {
+            // Aliases "Area" y "Espesor" eliminados — usar AreaBrutaInt y Width.
+            // "Area" causaba confusión: es la suma de HOST_AREA_COMPUTED
+            // de todas las instancias del tipo, no un valor observable individual.
             return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
             {
-                ["Area"]              = elem.AreaBrutaIntM2,
                 ["AreaBrutaInt"]      = elem.AreaBrutaIntM2,
                 ["AreaBrutaExt"]      = elem.AreaBrutaExtM2,
                 ["AreaNetaInt"]       = elem.AreaNetaIntM2,
@@ -1203,7 +1205,6 @@ namespace RvtConstructionOS.Services
                 ["Length"]            = elem.LongitudML,
                 ["Height"]            = elem.AlturaPromedio,
                 ["Width"]             = elem.EspesorM,
-                ["Espesor"]           = elem.EspesorM,
                 ["Count"]             = elem.CantInstancias,
                 ["Cantidad"]          = elem.Cantidad,
                 ["CantidadPrincipal"] = elem.CantidadPrincipal,

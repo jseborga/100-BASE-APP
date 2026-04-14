@@ -366,8 +366,14 @@ namespace RvtConstructionOS.Services
             }
         }
 
+        // Factores de conversión imperial → métrico (Revit internal = pies)
+        private const double PIE_A_METRO = 0.3048;
+        private const double PIE2_A_M2   = PIE_A_METRO * PIE_A_METRO;   // 0.09290304
+        private const double PIE3_A_M3   = PIE_A_METRO * PIE_A_METRO * PIE_A_METRO; // 0.02831685
+
         /// <summary>
-        /// Lee el valor numérico de un parámetro (para evaluar fórmulas).
+        /// Lee el valor numérico de un parámetro, convirtiendo de unidades internas
+        /// de Revit (pies/ft²/ft³) a SI (metros/m²/m³) automáticamente.
         /// Para parámetros de texto o sin valor, retorna 0.
         /// </summary>
         public static double LeerValorNumerico(Parameter p)
@@ -375,12 +381,25 @@ namespace RvtConstructionOS.Services
             try
             {
                 if (!p.HasValue) return 0;
-                return p.StorageType switch
-                {
-                    StorageType.Double  => p.AsDouble(),
-                    StorageType.Integer => p.AsInteger(),
-                    _ => 0
-                };
+                if (p.StorageType == StorageType.Integer) return p.AsInteger();
+                if (p.StorageType != StorageType.Double) return 0;
+
+                double raw = p.AsDouble();
+
+                // Convertir según el tipo de dato del parámetro
+                string specId = "";
+                try { specId = p.Definition?.GetDataType()?.TypeId ?? ""; }
+                catch { /* built-in sin spec */ }
+
+                if (specId.Contains("length", StringComparison.OrdinalIgnoreCase))
+                    return raw * PIE_A_METRO;
+                if (specId.Contains("area", StringComparison.OrdinalIgnoreCase))
+                    return raw * PIE2_A_M2;
+                if (specId.Contains("volume", StringComparison.OrdinalIgnoreCase))
+                    return raw * PIE3_A_M3;
+
+                // Ángulos, adimensionales, etc. → sin conversión
+                return raw;
             }
             catch { return 0; }
         }

@@ -83,6 +83,12 @@ namespace RvtConstructionOS.Models
         [JsonPropertyName("preserved_links")]
         public int PreservedLinks { get; set; }
 
+        [JsonPropertyName("recalculated")]
+        public int Recalculated { get; set; }
+
+        [JsonPropertyName("partidas_updated")]
+        public int PartidasUpdated { get; set; }
+
         [JsonPropertyName("total_elementos")]
         public int TotalElementos { get; set; }
 

@@ -1,7 +1,7 @@
 // Services/BimSerializer.cs
 // Converts BimElement + BimAbertura to JSON-ready dictionaries for the ConstructionOS server.
-// Outputs simplified aliases (backward compat) and full names.
-// Pre-computes opening aggregates on walls for N:1 mapping.
+// Sends all geometric + weight params for all categories (non-zero only).
+// Wall-specific params (acabados, flags, opening aggregates) only for Muros.
 
 using RvtConstructionOS.Models;
 
@@ -14,9 +14,9 @@ namespace RvtConstructionOS.Services
             List<BimAbertura>? aberturas = null)
         {
             var p = new Dictionary<string, object>();
+            bool isWall = elem.Categoria == "Muros";
 
-            // Core geometric params — only include non-zero values
-            // "Area" alias removed — use specific AreaBrutaInt/AreaNetaInt instead
+            // ── Geometric params (all categories, non-zero only) ──
             SetIfPositive(p, "AreaBrutaInt", elem.AreaBrutaIntM2);
             SetIfPositive(p, "AreaBrutaExt", elem.AreaBrutaExtM2);
             SetIfPositive(p, "AreaNetaInt", elem.AreaNetaIntM2);
@@ -27,52 +27,55 @@ namespace RvtConstructionOS.Services
             SetIfPositive(p, "Length", elem.LongitudML);
             SetIfPositive(p, "Height", elem.AlturaPromedio);
             SetIfPositive(p, "Width", elem.EspesorM);
-
-            // Count is always relevant
             Set(p, "Count", elem.CantInstancias);
 
-            // Only include calculated quantities if non-zero
-            SetIfPositive(p, "Cantidad", elem.Cantidad);
+            // ── Calculated quantities (non-zero only) ──
             SetIfPositive(p, "CantidadPrincipal", elem.CantidadPrincipal);
-            SetIfPositive(p, "CantidadConDesperdicio", elem.CantidadConDesperdicio);
             if (elem.FactorDesperdicio > 1.0)
+            {
                 Set(p, "FactorDesperdicio", elem.FactorDesperdicio);
+                SetIfPositive(p, "CantidadConDesperdicio", elem.CantidadConDesperdicio);
+            }
+
+            // ── Weight params (all categories, for steel/weight operations) ──
             SetIfPositive(p, "PesoLinealKgM", elem.PesoLinealKgM);
             SetIfPositive(p, "PesoTotalKg", elem.PesoTotalKg);
 
-            // Acabados — only include if configured
-            SetIfPositive(p, "RevEspInt", elem.RevEspInt);
-            SetIfPositive(p, "RevEspExt", elem.RevEspExt);
-            SetIfPositive(p, "CeramicaAltura", elem.CeramicaAltura);
-
-            // Boolean flags — only include if true (1.0)
-            if (elem.RevEspInt > 0)   p["HasRevoqueInt"] = 1.0;
-            if (elem.RevEspExt > 0)   p["HasRevoqueExt"] = 1.0;
-            if (HasText(elem.PinturaTipoInt)) p["HasPinturaInt"] = 1.0;
-            if (HasText(elem.PinturaTipoExt)) p["HasPinturaExt"] = 1.0;
-            if (elem.CeramicaAltura > 0)      p["HasCeramica"] = 1.0;
-            if (elem.ConsiderarDintel) p["HasDintel"] = 1.0;
-            if (elem.ConsiderarRasgo)  p["HasRasgo"] = 1.0;
-            if (elem.ConsiderarBuna)   p["HasBuna"] = 1.0;
-
-            // Wall-specific opening aggregates
-            if (aberturas != null && aberturas.Count > 0 && elem.Categoria == "Muros")
+            // ── Wall-specific: acabados, flags, opening aggregates ──
+            if (isWall)
             {
-                double rasgoTotal = 0, dintelTotal = 0, alfeizarTotal = 0;
-                foreach (var ab in aberturas)
+                SetIfPositive(p, "RevEspInt", elem.RevEspInt);
+                SetIfPositive(p, "RevEspExt", elem.RevEspExt);
+                SetIfPositive(p, "CeramicaAltura", elem.CeramicaAltura);
+
+                if (elem.RevEspInt > 0)                p["HasRevoqueInt"] = 1.0;
+                if (elem.RevEspExt > 0)                p["HasRevoqueExt"] = 1.0;
+                if (HasText(elem.PinturaTipoInt))      p["HasPinturaInt"] = 1.0;
+                if (HasText(elem.PinturaTipoExt))      p["HasPinturaExt"] = 1.0;
+                if (elem.CeramicaAltura > 0)           p["HasCeramica"]   = 1.0;
+                if (elem.ConsiderarDintel)             p["HasDintel"]     = 1.0;
+                if (elem.ConsiderarRasgo)              p["HasRasgo"]      = 1.0;
+                if (elem.ConsiderarBuna)               p["HasBuna"]       = 1.0;
+
+                if (aberturas != null && aberturas.Count > 0)
                 {
-                    if (!ab.IncluirComputo) continue;
-                    double perimetro = (2 * ab.AltoM) + ab.AnchoM;
-                    rasgoTotal += perimetro * elem.EspesorM;
-                    dintelTotal += ab.AnchoM;
-                    if (ab.Categoria == "Ventanas") alfeizarTotal += ab.AnchoM;
+                    double rasgoTotal = 0, dintelTotal = 0, alfeizarTotal = 0;
+                    foreach (var ab in aberturas)
+                    {
+                        if (!ab.IncluirComputo) continue;
+                        double perimetro = (2 * ab.AltoM) + ab.AnchoM;
+                        rasgoTotal += perimetro * elem.EspesorM;
+                        dintelTotal += ab.AnchoM;
+                        if (ab.Categoria == "Ventanas") alfeizarTotal += ab.AnchoM;
+                    }
+                    SetIfPositive(p, "RasgoTotalM2", rasgoTotal);
+                    SetIfPositive(p, "DintelTotalML", dintelTotal);
+                    SetIfPositive(p, "AlfeizarTotalML", alfeizarTotal);
+                    SetIfPositive(p, "ZocaloML", elem.LongitudML);
                 }
-                SetIfPositive(p, "RasgoTotalM2", rasgoTotal);
-                SetIfPositive(p, "DintelTotalML", dintelTotal);
-                SetIfPositive(p, "AlfeizarTotalML", alfeizarTotal);
-                SetIfPositive(p, "ZocaloML", elem.LongitudML);
             }
 
+            // ── Metadata ──
             p["_unique_id"] = elem.UniqueId;
             if (!string.IsNullOrEmpty(elem.FuncionElemento)) p["_funcion"] = elem.FuncionElemento;
             if (!string.IsNullOrEmpty(elem.Nivel)) p["_nivel"] = elem.Nivel;
@@ -83,7 +86,7 @@ namespace RvtConstructionOS.Services
             if (!string.IsNullOrEmpty(elem.SeccionTransversal)) p["_seccion"] = elem.SeccionTransversal;
             if (!string.IsNullOrEmpty(elem.CriterioMedicion)) p["_criterio"] = elem.CriterioMedicion;
 
-            // Parámetros custom configurados por el usuario (wizard)
+            // ── Custom params from wizard (already filtered by Activo flag) ──
             foreach (var kv in elem.ParametrosCustomValues)
             {
                 if (kv.Value is double d)
