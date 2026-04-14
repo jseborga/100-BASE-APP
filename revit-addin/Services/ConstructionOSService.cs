@@ -114,6 +114,25 @@ namespace RvtConstructionOS.Services
             });
         }
 
+        public async Task<UpdateBimResponse> UpdateBimElementsAsync(
+            string importacionId,
+            List<BimElementPayload> elementos)
+        {
+            return await CallActionAsync<UpdateBimResponse>("update_bim_elements", new
+            {
+                importacion_id = importacionId,
+                elementos,
+            });
+        }
+
+        public async Task<ListBimImportsResponse> ListBimImportsAsync(string proyectoId)
+        {
+            return await CallActionAsync<ListBimImportsResponse>("get_bim_imports", new
+            {
+                proyecto_id = proyectoId,
+            });
+        }
+
         public async Task<MatchBimResponse> MatchBimElementsAsync(string importacionId)
         {
             return await CallActionAsync<MatchBimResponse>("match_bim_elements", new

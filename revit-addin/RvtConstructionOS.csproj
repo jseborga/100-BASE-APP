@@ -13,6 +13,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.104.2" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="RevitAPI">
       <HintPath>C:\Program Files\Autodesk\Revit 2025\RevitAPI.dll</HintPath>
       <Private>false</Private>
@@ -23,7 +27,6 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Carpeta destino del Add-in en Revit 2025 -->
   <PropertyGroup>
     <RevitAddinsDir>$(AppData)\Autodesk\Revit\Addins\2025\</RevitAddinsDir>
   </PropertyGroup>
@@ -32,17 +35,14 @@
     <Copy SourceFiles="$(ProjectDir)$(AssemblyName).addin"
           DestinationFolder="$(RevitAddinsDir)"
           OverwriteReadOnlyFiles="true" />
-
     <ItemGroup>
       <DllsParaDesplegar Include="$(TargetDir)*.dll"
                          Exclude="$(TargetDir)RevitAPI*.dll" />
     </ItemGroup>
-
     <Copy SourceFiles="@(DllsParaDesplegar)"
           DestinationFolder="$(RevitAddinsDir)"
           OverwriteReadOnlyFiles="true"
           ContinueOnError="true" />
-
-    <Message Text="PostBuild: RvtConstructionOS copiado a $(RevitAddinsDir)" Importance="high" />
+    <Message Text="PostBuild: RvtConstructionOS deployed to $(RevitAddinsDir)" Importance="high" />
   </Target>
 </Project>

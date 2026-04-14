@@ -76,7 +76,6 @@ namespace RvtConstructionOS.Commands
                 var payloads = new List<BimElementPayload>();
                 foreach (var elem in extractionResult.Elementos)
                 {
-                    // For walls, pass their hosted openings for N:1 aggregate computation
                     List<BimAbertura>? wallOpenings = null;
                     if (elem.Categoria == "Muros" && huecosPorMuro.TryGetValue(elem.UniqueId, out var openings))
                         wallOpenings = openings;
@@ -84,31 +83,95 @@ namespace RvtConstructionOS.Commands
                     payloads.Add(BimSerializer.ToPayload(elem, wallOpenings));
                 }
 
-                // Enviar al servidor
                 var service = new ConstructionOSService(config);
                 string archivoNombre = doc.Title ?? "Revit Export";
 
-                var task = Task.Run(() => service.ImportBimElementsAsync(
-                    config.ProyectoId, archivoNombre, payloads));
-                var result = task.GetAwaiter().GetResult();
-
-                int elemConCustom = extractionResult.Elementos
-                    .Count(e => e.ParametrosCustomValues.Count > 0);
-                int totalNotas = extractionResult.Elementos
-                    .Sum(e => e.NotasIA.Count);
-
-                string resumen = $"Exportación completada:\n\n" +
-                    $"  Elementos enviados: {result.TotalElementos}\n" +
-                    $"  Con categoría válida: {result.ConCategoria}\n" +
-                    $"  Sin categoría: {result.SinCategoria}\n" +
-                    $"  Con params custom: {elemConCustom}\n" +
-                    $"  Notas IA enviadas: {totalNotas}\n" +
-                    $"  ID importación: {result.ImportacionId}";
-
-                if (result.CategoriasDesconocidas.Count > 0)
+                // Check for existing imports in this project
+                string? importacionExistenteId = null;
+                try
                 {
-                    resumen += $"\n\nCategorías desconocidas:\n  " +
-                        string.Join("\n  ", result.CategoriasDesconocidas);
+                    var imports = Task.Run(() => service.ListBimImportsAsync(config.ProyectoId))
+                        .GetAwaiter().GetResult();
+
+                    // Find an existing import with the same file name
+                    var existente = imports.Imports
+                        .FirstOrDefault(i => i.ArchivoNombre == archivoNombre);
+
+                    if (existente != null)
+                    {
+                        var dlg = new TaskDialog("Exportar BIM")
+                        {
+                            MainInstruction = "Ya existe una exportación de este modelo.",
+                            MainContent =
+                                $"Importación existente: {existente.ArchivoNombre}\n" +
+                                $"Elementos: {existente.TotalElementos} ({existente.ElementosMapeados} vinculados)\n" +
+                                $"Fecha: {existente.CreatedAt}\n\n" +
+                                "¿Qué desea hacer?",
+                            CommonButtons = TaskDialogCommonButtons.Cancel,
+                        };
+                        dlg.AddCommandLink(TaskDialogCommandLinkId.CommandLink1,
+                            "Actualizar datos",
+                            "Actualiza parámetros, preserva vínculos con partidas, recalcula cantidades.");
+                        dlg.AddCommandLink(TaskDialogCommandLinkId.CommandLink2,
+                            "Nueva versión",
+                            "Crea una importación nueva. Los vínculos anteriores se mantienen aparte.");
+
+                        var dialogResult = dlg.Show();
+
+                        if (dialogResult == TaskDialogResult.Cancel)
+                            return Result.Cancelled;
+
+                        if (dialogResult == TaskDialogResult.CommandLink1)
+                            importacionExistenteId = existente.Id;
+                        // CommandLink2 → importacionExistenteId stays null → new import
+                    }
+                }
+                catch
+                {
+                    // If checking imports fails, proceed with new import
+                }
+
+                string resumen;
+
+                if (importacionExistenteId != null)
+                {
+                    // Update existing import
+                    var result = Task.Run(() => service.UpdateBimElementsAsync(
+                        importacionExistenteId, payloads))
+                        .GetAwaiter().GetResult();
+
+                    resumen = $"Actualización completada:\n\n" +
+                        $"  Actualizados: {result.Updated}\n" +
+                        $"  Nuevos: {result.Inserted}\n" +
+                        $"  Eliminados del modelo: {result.Removed}\n" +
+                        $"  Vínculos preservados: {result.PreservedLinks}\n" +
+                        $"  Total elementos: {result.TotalElementos}";
+                }
+                else
+                {
+                    // New import
+                    var result = Task.Run(() => service.ImportBimElementsAsync(
+                        config.ProyectoId, archivoNombre, payloads))
+                        .GetAwaiter().GetResult();
+
+                    int elemConCustom = extractionResult.Elementos
+                        .Count(e => e.ParametrosCustomValues.Count > 0);
+                    int totalNotas = extractionResult.Elementos
+                        .Sum(e => e.NotasIA.Count);
+
+                    resumen = $"Exportación completada:\n\n" +
+                        $"  Elementos enviados: {result.TotalElementos}\n" +
+                        $"  Con categoría válida: {result.ConCategoria}\n" +
+                        $"  Sin categoría: {result.SinCategoria}\n" +
+                        $"  Con params custom: {elemConCustom}\n" +
+                        $"  Notas IA enviadas: {totalNotas}\n" +
+                        $"  ID importación: {result.ImportacionId}";
+
+                    if (result.CategoriasDesconocidas.Count > 0)
+                    {
+                        resumen += $"\n\nCategorías desconocidas:\n  " +
+                            string.Join("\n  ", result.CategoriasDesconocidas);
+                    }
                 }
 
                 TaskDialog.Show("Exportar BIM", resumen);

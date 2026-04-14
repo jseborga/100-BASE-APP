@@ -63,6 +63,68 @@ namespace RvtConstructionOS.Models
     }
 
     // ============================================================
+    // Respuesta de update_bim_elements
+    // ============================================================
+
+    public class UpdateBimResponse
+    {
+        [JsonPropertyName("importacion_id")]
+        public string ImportacionId { get; set; } = string.Empty;
+
+        [JsonPropertyName("updated")]
+        public int Updated { get; set; }
+
+        [JsonPropertyName("inserted")]
+        public int Inserted { get; set; }
+
+        [JsonPropertyName("removed")]
+        public int Removed { get; set; }
+
+        [JsonPropertyName("preserved_links")]
+        public int PreservedLinks { get; set; }
+
+        [JsonPropertyName("total_elementos")]
+        public int TotalElementos { get; set; }
+
+        [JsonPropertyName("message")]
+        public string Message { get; set; } = string.Empty;
+    }
+
+    // ============================================================
+    // Respuesta de list_bim_imports (para diálogo re-export)
+    // ============================================================
+
+    public class ListBimImportsResponse
+    {
+        [JsonPropertyName("imports")]
+        public List<BimImportSummary> Imports { get; set; } = new();
+
+        [JsonPropertyName("count")]
+        public int Count { get; set; }
+    }
+
+    public class BimImportSummary
+    {
+        [JsonPropertyName("id")]
+        public string Id { get; set; } = string.Empty;
+
+        [JsonPropertyName("archivo_nombre")]
+        public string? ArchivoNombre { get; set; }
+
+        [JsonPropertyName("total_elementos")]
+        public int TotalElementos { get; set; }
+
+        [JsonPropertyName("elementos_mapeados")]
+        public int ElementosMapeados { get; set; }
+
+        [JsonPropertyName("estado")]
+        public string Estado { get; set; } = "pendiente";
+
+        [JsonPropertyName("created_at")]
+        public string? CreatedAt { get; set; }
+    }
+
+    // ============================================================
     // Respuesta de match_bim_elements
     // ============================================================
 

@@ -15,40 +15,47 @@ namespace RvtConstructionOS.Services
         {
             var p = new Dictionary<string, object>();
 
-            Set(p, "Area", elem.AreaBrutaIntM2);
-            Set(p, "AreaBrutaInt", elem.AreaBrutaIntM2);
-            Set(p, "AreaBrutaExt", elem.AreaBrutaExtM2);
-            Set(p, "AreaNetaInt", elem.AreaNetaIntM2);
-            Set(p, "AreaNetaExt", elem.AreaNetaExtM2);
-            Set(p, "OpeningsArea", elem.AreaHuecosDescontadosM2);
-            Set(p, "OpeningsAreaTotal", elem.AreaHuecosM2);
-            Set(p, "OpeningsAreaNoDesc", elem.AreaHuecosNoDescontadosM2);
-            Set(p, "Volume", elem.VolumenM3);
-            Set(p, "Length", elem.LongitudML);
-            Set(p, "Height", elem.AlturaPromedio);
-            Set(p, "Width", elem.EspesorM);
-            Set(p, "Espesor", elem.EspesorM);
+            // Core geometric params — only include non-zero values
+            // "Area" alias removed — use specific AreaBrutaInt/AreaNetaInt instead
+            SetIfPositive(p, "AreaBrutaInt", elem.AreaBrutaIntM2);
+            SetIfPositive(p, "AreaBrutaExt", elem.AreaBrutaExtM2);
+            SetIfPositive(p, "AreaNetaInt", elem.AreaNetaIntM2);
+            SetIfPositive(p, "AreaNetaExt", elem.AreaNetaExtM2);
+            SetIfPositive(p, "OpeningsArea", elem.AreaHuecosDescontadosM2);
+            SetIfPositive(p, "OpeningsAreaTotal", elem.AreaHuecosM2);
+            SetIfPositive(p, "Volume", elem.VolumenM3);
+            SetIfPositive(p, "Length", elem.LongitudML);
+            SetIfPositive(p, "Height", elem.AlturaPromedio);
+            SetIfPositive(p, "Width", elem.EspesorM);
+
+            // Count is always relevant
             Set(p, "Count", elem.CantInstancias);
-            Set(p, "Cantidad", elem.Cantidad);
-            Set(p, "CantidadPrincipal", elem.CantidadPrincipal);
-            Set(p, "CantidadConDesperdicio", elem.CantidadConDesperdicio);
-            Set(p, "FactorDesperdicio", elem.FactorDesperdicio);
-            Set(p, "PesoLinealKgM", elem.PesoLinealKgM);
-            Set(p, "PesoTotalKg", elem.PesoTotalKg);
 
-            Set(p, "RevEspInt", elem.RevEspInt);
-            Set(p, "RevEspExt", elem.RevEspExt);
-            Set(p, "CeramicaAltura", elem.CeramicaAltura);
+            // Only include calculated quantities if non-zero
+            SetIfPositive(p, "Cantidad", elem.Cantidad);
+            SetIfPositive(p, "CantidadPrincipal", elem.CantidadPrincipal);
+            SetIfPositive(p, "CantidadConDesperdicio", elem.CantidadConDesperdicio);
+            if (elem.FactorDesperdicio > 1.0)
+                Set(p, "FactorDesperdicio", elem.FactorDesperdicio);
+            SetIfPositive(p, "PesoLinealKgM", elem.PesoLinealKgM);
+            SetIfPositive(p, "PesoTotalKg", elem.PesoTotalKg);
 
-            p["HasRevoqueInt"] = elem.RevEspInt > 0 ? 1.0 : 0.0;
-            p["HasRevoqueExt"] = elem.RevEspExt > 0 ? 1.0 : 0.0;
-            p["HasPinturaInt"] = HasText(elem.PinturaTipoInt) ? 1.0 : 0.0;
-            p["HasPinturaExt"] = HasText(elem.PinturaTipoExt) ? 1.0 : 0.0;
-            p["HasCeramica"] = elem.CeramicaAltura > 0 ? 1.0 : 0.0;
-            p["HasDintel"] = elem.ConsiderarDintel ? 1.0 : 0.0;
-            p["HasRasgo"] = elem.ConsiderarRasgo ? 1.0 : 0.0;
-            p["HasBuna"] = elem.ConsiderarBuna ? 1.0 : 0.0;
+            // Acabados — only include if configured
+            SetIfPositive(p, "RevEspInt", elem.RevEspInt);
+            SetIfPositive(p, "RevEspExt", elem.RevEspExt);
+            SetIfPositive(p, "CeramicaAltura", elem.CeramicaAltura);
 
+            // Boolean flags — only include if true (1.0)
+            if (elem.RevEspInt > 0)   p["HasRevoqueInt"] = 1.0;
+            if (elem.RevEspExt > 0)   p["HasRevoqueExt"] = 1.0;
+            if (HasText(elem.PinturaTipoInt)) p["HasPinturaInt"] = 1.0;
+            if (HasText(elem.PinturaTipoExt)) p["HasPinturaExt"] = 1.0;
+            if (elem.CeramicaAltura > 0)      p["HasCeramica"] = 1.0;
+            if (elem.ConsiderarDintel) p["HasDintel"] = 1.0;
+            if (elem.ConsiderarRasgo)  p["HasRasgo"] = 1.0;
+            if (elem.ConsiderarBuna)   p["HasBuna"] = 1.0;
+
+            // Wall-specific opening aggregates
             if (aberturas != null && aberturas.Count > 0 && elem.Categoria == "Muros")
             {
                 double rasgoTotal = 0, dintelTotal = 0, alfeizarTotal = 0;
@@ -60,10 +67,10 @@ namespace RvtConstructionOS.Services
                     dintelTotal += ab.AnchoM;
                     if (ab.Categoria == "Ventanas") alfeizarTotal += ab.AnchoM;
                 }
-                Set(p, "RasgoTotalM2", rasgoTotal);
-                Set(p, "DintelTotalML", dintelTotal);
-                Set(p, "AlfeizarTotalML", alfeizarTotal);
-                Set(p, "ZocaloML", elem.LongitudML);
+                SetIfPositive(p, "RasgoTotalM2", rasgoTotal);
+                SetIfPositive(p, "DintelTotalML", dintelTotal);
+                SetIfPositive(p, "AlfeizarTotalML", alfeizarTotal);
+                SetIfPositive(p, "ZocaloML", elem.LongitudML);
             }
 
             p["_unique_id"] = elem.UniqueId;
@@ -127,6 +134,11 @@ namespace RvtConstructionOS.Services
 
         private static void Set(Dictionary<string, object> p, string key, int value)
             => p[key] = (double)value;
+
+        private static void SetIfPositive(Dictionary<string, object> p, string key, double value)
+        {
+            if (value > 0) p[key] = Math.Round(value, 4);
+        }
 
         private static bool HasText(string? value)
             => !string.IsNullOrWhiteSpace(value) && !value.Equals("NINGUNO", StringComparison.OrdinalIgnoreCase);

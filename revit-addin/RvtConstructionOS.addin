@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RevitAddIns>
   <AddIn Type="Application">
-    <Name>RvtConstructionOS - ConstructionOS BIM</Name>
+    <Name>RvtConstructionOS - BIM Metrados</Name>
     <Assembly>RvtConstructionOS.dll</Assembly>
-    <AddInId>B2C3D4E5-F6A7-8901-BCDE-FA2345678901</AddInId>
+    <AddInId>B2C3D4E5-F6A7-8901-BCDE-F23456789012</AddInId>
     <FullClassName>RvtConstructionOS.App</FullClassName>
     <VendorId>SSA</VendorId>
-    <VendorDescription>SSA Ingenieria SRL</VendorDescription>
+    <VendorDescription>SSA Ingenieria SRL - ConstructionOS</VendorDescription>
   </AddIn>
 </RevitAddIns>

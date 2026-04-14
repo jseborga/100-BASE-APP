@@ -105,6 +105,7 @@ const ACTIONS: Record<string, ActionHandler> = {
   get_bim_element_detail: handleGetBimElementDetail,
   get_revit_mapeos: handleGetRevitMapeos,
   import_bim_elements: handleImportBimElements,
+  update_bim_elements: handleUpdateBimElements,
   match_bim_elements: handleMatchBimElements,
   confirm_bim_match: handleConfirmBimMatch,
 
@@ -227,6 +228,10 @@ const ACTIONS_DOCS: Record<string, { description: string; params: string }> = {
   import_bim_elements: {
     description: 'Import BIM elements from Revit. Creates importacion + elements, auto-resolves category by name. Supports custom params with AI notes.',
     params: '{ proyecto_id: string, archivo_nombre?: string, elementos: Array<{ revit_id: string, categoria: string, familia: string, tipo: string, parametros: Record<string,number>, metadata?: Record<string,string>, notas_ia?: Record<string,string>, nota_familia?: string }> }',
+  },
+  update_bim_elements: {
+    description: 'Update an existing BIM import with fresh data from Revit. Matches elements by unique_id: updates params for existing, inserts new, marks removed. Preserves partida_id links.',
+    params: '{ importacion_id: string, elementos: Array<{ revit_id: string, unique_id?: string, categoria: string, familia: string, tipo: string, parametros: Record<string,number>, metadata?: Record<string,string>, notas_ia?: Record<string,string>, nota_familia?: string }> }',
   },
   match_bim_elements: {
     description: 'Run formula-based matching on imported BIM elements. Evaluates revit_mapeos formulas, assigns partida_id + metrado_calculado. Creates derived elements for multiple mappings per category.',
@@ -1191,6 +1196,176 @@ async function handleImportBimElements(params: Record<string, unknown>) {
     sin_categoria: elementos.length - withCategory,
     categorias_desconocidas: unknownCategories,
     message: `Import created: ${elementos.length} elements (${withCategory} with valid category)`,
+  }
+}
+
+async function handleUpdateBimElements(params: Record<string, unknown>) {
+  const admin = getAdmin()
+  const importacion_id = params.importacion_id as string
+  const elementos = params.elementos as Array<{
+    revit_id: string
+    unique_id?: string
+    categoria: string
+    familia: string
+    tipo: string
+    parametros: Record<string, number>
+    metadata?: Record<string, string>
+    notas_ia?: Record<string, string>
+    nota_familia?: string
+  }>
+
+  if (!importacion_id) throw new Error('importacion_id is required')
+  if (!elementos?.length) throw new Error('elementos array is required')
+
+  // Verify importacion exists
+  const { data: importacion, error: impErr } = await admin
+    .from('bim_importaciones')
+    .select('id, proyecto_id')
+    .eq('id', importacion_id)
+    .single()
+  if (impErr || !importacion) throw new Error('importacion not found')
+
+  // Load revit categories (same as import)
+  const { data: categorias } = await admin
+    .from('revit_categorias')
+    .select('id, nombre, nombre_es')
+
+  const catMap = new Map<string, string>()
+  for (const c of categorias || []) {
+    catMap.set(c.nombre, c.id)
+    if (c.nombre_es) catMap.set(c.nombre_es, c.id)
+  }
+  const aliases: Record<string, string> = {
+    'Pisos': 'Floors', 'Losas': 'Floors', 'Pisos/Losas': 'Floors',
+    'Cielorrasos': 'Ceilings', 'Cielos Rasos': 'Ceilings', 'Cielo Raso': 'Ceilings',
+    'Pilares Est.': 'Structural Columns', 'Pilares Estructurales': 'Structural Columns',
+    'Columnas': 'Structural Columns', 'Columnas Estructurales': 'Structural Columns',
+    'Vigas/Cerchas': 'Structural Framing', 'Vigas': 'Structural Framing',
+    'Vigas Estructurales': 'Structural Framing',
+    'Sanitarios': 'Plumbing Fixtures', 'Aparatos Sanitarios': 'Plumbing Fixtures',
+    'Artefactos Eléc.': 'Electrical Fixtures', 'Aparatos Eléctricos': 'Electrical Fixtures',
+    'Luminarias': 'Electrical Fixtures', 'Eq. Eléctrico': 'Electrical Fixtures',
+    'Fundaciones': 'Structural Columns',
+    'Cubiertas': 'Roofs', 'Escaleras': 'Stairs', 'Barandas': 'Railings',
+    'Muros': 'Walls', 'Puertas': 'Doors', 'Ventanas': 'Windows',
+    'Paneles Muro Cortina': 'Walls', 'Montantes Muro Cortina': 'Railings',
+    'Curtain Wall': 'Walls', 'Basic Wall': 'Walls',
+  }
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    if (!catMap.has(alias) && catMap.has(canonical)) {
+      catMap.set(alias, catMap.get(canonical)!)
+    }
+  }
+
+  // Load existing elements, indexed by unique_id
+  const { data: existingElements } = await admin
+    .from('bim_elementos')
+    .select('id, parametros, partida_id, estado')
+    .eq('importacion_id', importacion_id)
+
+  const existingByUniqueId = new Map<string, { id: string; partida_id: string | null; estado: string }>()
+  for (const el of existingElements || []) {
+    const uid = (el.parametros as Record<string, unknown>)?._unique_id as string
+    if (uid) existingByUniqueId.set(uid, { id: el.id, partida_id: el.partida_id, estado: el.estado })
+  }
+
+  let updated = 0, inserted = 0, removed = 0, preservedLinks = 0
+  const incomingUniqueIds = new Set<string>()
+
+  // Build rows with same logic as import
+  const buildParams = (e: typeof elementos[0]) => {
+    const allParams: Record<string, unknown> = { ...(e.parametros || {}) }
+    if (e.metadata && Object.keys(e.metadata).length > 0) {
+      allParams._metadata = e.metadata
+    }
+    if (e.unique_id) {
+      allParams._unique_id = e.unique_id
+    }
+    if (e.notas_ia && Object.keys(e.notas_ia).length > 0) {
+      allParams._notas_ia = e.notas_ia
+    }
+    if (e.nota_familia) {
+      allParams._nota_familia = e.nota_familia
+    }
+    return allParams
+  }
+
+  // Process updates and inserts
+  const toInsert: Array<Record<string, unknown>> = []
+  const toUpdate: Array<{ id: string; data: Record<string, unknown> }> = []
+
+  for (const e of elementos) {
+    if (e.unique_id) incomingUniqueIds.add(e.unique_id)
+    const allParams = buildParams(e)
+    const revitCatId = catMap.get(e.categoria) || null
+    const existing = e.unique_id ? existingByUniqueId.get(e.unique_id) : null
+
+    if (existing) {
+      toUpdate.push({
+        id: existing.id,
+        data: {
+          parametros: allParams,
+          familia: e.familia || null,
+          tipo: e.tipo || null,
+          revit_id: e.revit_id || null,
+          revit_categoria_id: revitCatId,
+          estado: existing.partida_id ? existing.estado : 'pendiente',
+        },
+      })
+      if (existing.partida_id) preservedLinks++
+      updated++
+    } else {
+      toInsert.push({
+        importacion_id,
+        revit_id: e.revit_id || null,
+        revit_categoria_id: revitCatId,
+        familia: e.familia || null,
+        tipo: e.tipo || null,
+        parametros: allParams,
+        estado: 'pendiente' as const,
+      })
+      inserted++
+    }
+  }
+
+  // Batch updates
+  for (const item of toUpdate) {
+    await admin.from('bim_elementos').update(item.data).eq('id', item.id)
+  }
+
+  // Batch inserts (50 at a time)
+  for (let i = 0; i < toInsert.length; i += 50) {
+    const batch = toInsert.slice(i, i + 50)
+    const { error: elemErr } = await admin.from('bim_elementos').insert(batch)
+    if (elemErr) throw new Error(elemErr.message)
+  }
+
+  // Mark elements removed from model
+  for (const [uid, el] of existingByUniqueId) {
+    if (!incomingUniqueIds.has(uid)) {
+      await admin.from('bim_elementos')
+        .update({ estado: 'eliminado' })
+        .eq('id', el.id)
+      removed++
+    }
+  }
+
+  // Update importacion
+  await admin.from('bim_importaciones')
+    .update({
+      total_elementos: elementos.length,
+      metadata: { source: 'mcp_webhook', updated_at: new Date().toISOString() },
+    })
+    .eq('id', importacion_id)
+
+  return {
+    importacion_id,
+    updated,
+    inserted,
+    removed,
+    preserved_links: preservedLinks,
+    total_elementos: elementos.length,
+    message: `Updated: ${updated} (${preservedLinks} with links), New: ${inserted}, Removed: ${removed}`,
   }
 }
 
