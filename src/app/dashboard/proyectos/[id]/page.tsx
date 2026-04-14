@@ -10,9 +10,10 @@ import {
   ArrowLeft, MapPin, Building2, Calendar, Bot, FileSpreadsheet,
   Upload, Trash2, Check, X, Pencil, Plus, ChevronDown, ChevronRight, Download,
   LayoutTemplate, Loader2, Box, RefreshCw,
-  Search, Layers, Link2, Unlink,
+  Search, Layers, Link2,
 } from 'lucide-react'
 import Link from 'next/link'
+import BimLinkModal from '@/components/bim-link-modal'
 
 interface Pais {
   id: string
@@ -174,10 +175,7 @@ export default function ProyectoDetailPage() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   // Partida → BIM linking state
-  const [linkingPartida, setLinkingPartida] = useState<string | null>(null)
-  const [linkSelectedGroups, setLinkSelectedGroups] = useState<Set<string>>(new Set())
-  const [linkFormula, setLinkFormula] = useState('')
-  const [linkSaving, setLinkSaving] = useState(false)
+  const [linkModalPartida, setLinkModalPartida] = useState<string | null>(null)
 
 
   const fetchData = useCallback(async () => {
@@ -238,110 +236,11 @@ export default function ProyectoDetailPage() {
 
 
 
-  // --- Partida → BIM linking ---
-  const startLinkBim = (partidaId: string) => {
-    setLinkingPartida(partidaId)
-    setLinkSelectedGroups(new Set())
-    setLinkFormula('')
-  }
-
-  const toggleLinkGroup = (key: string) => {
-    setLinkSelectedGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
-
-  const handleLinkBim = async (partidaId: string) => {
-    if (linkSelectedGroups.size === 0 || !linkFormula.trim() || !activeImportId) return
-    setLinkSaving(true)
-    try {
-      // 1. Map BIM elements to this partida
-      for (const groupKey of linkSelectedGroups) {
-        const group = bimGroups.find(g => g.key === groupKey)
-        if (!group) continue
-        await fetch(`/api/proyectos/${proyectoId}/bim`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            importacion_id: activeImportId,
-            revit_categoria_id: group.categoriaId,
-            familia: group.familia,
-            tipo: group.tipo,
-            partida_id: partidaId,
-            formula: linkFormula,
-          }),
-        })
-      }
-
-      // 2. Calculate total metrado from formula across all linked elements
-      let totalMetrado = 0
-      for (const groupKey of linkSelectedGroups) {
-        const group = bimGroups.find(g => g.key === groupKey)
-        if (!group) continue
-        for (const el of group.elements) {
-          const result = testFormula(linkFormula, el.parametros)
-          if (result && result.startsWith('=')) {
-            totalMetrado += parseFloat(result.slice(2)) || 0
-          }
-        }
-      }
-
-      // 3. Update proyecto_partidas.metrado_bim directly
-      if (totalMetrado > 0) {
-        await fetch(`/api/proyectos/${proyectoId}/bim`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'apply_derived',
-            partida_id: partidaId,
-            metrado: totalMetrado,
-            notas: `BIM: ${linkFormula}`,
-          }),
-        })
-      }
-
-      setLinkingPartida(null)
-      setLinkSelectedGroups(new Set())
-      setLinkFormula('')
-      await fetchBimData(activeImportId || undefined)
-      await fetchData()
-    } catch (err) {
-      console.error('Link BIM error:', err)
-    } finally {
-      setLinkSaving(false)
-    }
-  }
-
-  const handleUnlinkBim = async (partidaId: string) => {
-    if (!activeImportId) return
-    setLinkSaving(true)
-    try {
-      // Find groups linked to this partida — use reset_group with partida_id to remove specific mapping
-      const linkedGroups = getLinkedGroups(partidaId)
-      for (const group of linkedGroups) {
-        await fetch(`/api/proyectos/${proyectoId}/bim`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'reset_group',
-            importacion_id: activeImportId,
-            revit_categoria_id: group.categoriaId,
-            familia: group.familia,
-            tipo: group.tipo,
-            partida_id: partidaId, // only remove THIS partida mapping
-          }),
-        })
-      }
-      await fetchBimData(activeImportId || undefined)
-      await fetchData()
-    } catch (err) {
-      console.error('Unlink BIM error:', err)
-    } finally {
-      setLinkSaving(false)
-    }
+  // --- Partida → BIM linking (via modal) ---
+  const handleBimModalSaved = async () => {
+    setLinkModalPartida(null)
+    if (activeImportId) await fetchBimData(activeImportId)
+    await fetchData()
   }
 
   // Get BIM groups linked to a specific partida
@@ -461,21 +360,6 @@ export default function ProyectoDetailPage() {
       g.partida?.nombre?.toLowerCase().includes(s)
     )
   }, [bimGroups, bimSearch])
-
-  // Test formula with sample params
-  const testFormula = (formula: string, params: Record<string, number>): string | null => {
-    if (!formula.trim()) return null
-    try {
-      let expr = formula
-      const sortedKeys = Object.keys(params).sort((a, b) => b.length - a.length)
-      for (const k of sortedKeys) {
-        expr = expr.replace(new RegExp(`\\b${k}\\b`, 'g'), String(params[k]))
-      }
-      if (/[^0-9+\-*/().eE\s]/.test(expr)) return 'Error: caracteres no válidos'
-      const r = Function(`"use strict"; return (${expr})`)()
-      return typeof r === 'number' && isFinite(r) ? `= ${r.toFixed(4)}` : 'Error'
-    } catch { return 'Error: fórmula inválida' }
-  }
 
   useEffect(() => {
     if (proyectoId) {
@@ -1312,7 +1196,6 @@ export default function ProyectoDetailPage() {
                         const codigoLocal = p.partidas?.partida_localizaciones?.[0]?.codigo_local || ''
                         const hasBimData = bimData && bimData.imports.length > 0
                         const linkedGroups = hasBimData ? getLinkedGroups(p.partida_id) : []
-                        const isLinking = linkingPartida === p.partida_id
 
                         return (
                           <div key={p.id}>
@@ -1408,27 +1291,18 @@ export default function ProyectoDetailPage() {
                               {/* BIM Link */}
                               <div className="flex justify-center">
                                 {hasBimData ? (
-                                  linkedGroups.length > 0 ? (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6 text-indigo-600 hover:text-red-600"
-                                      onClick={() => isLinking ? setLinkingPartida(null) : startLinkBim(p.partida_id)}
-                                      title={isLinking ? 'Cerrar' : `${linkedGroups.length} grupo(s) vinculado(s)`}
-                                    >
-                                      {isLinking ? <X className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
-                                    </Button>
-                                  ) : (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-indigo-600"
-                                      onClick={() => isLinking ? setLinkingPartida(null) : startLinkBim(p.partida_id)}
-                                      title="Vincular con BIM"
-                                    >
-                                      {isLinking ? <X className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
-                                    </Button>
-                                  )
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className={`h-6 w-6 ${linkedGroups.length > 0
+                                      ? 'text-indigo-600 hover:text-indigo-800'
+                                      : 'opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-indigo-600'
+                                    }`}
+                                    onClick={() => setLinkModalPartida(p.partida_id)}
+                                    title={linkedGroups.length > 0 ? `${linkedGroups.length} grupo(s) vinculado(s) — editar` : 'Vincular con BIM'}
+                                  >
+                                    {linkedGroups.length > 0 ? <Pencil className="w-3.5 h-3.5" /> : <Link2 className="w-3.5 h-3.5" />}
+                                  </Button>
                                 ) : null}
                               </div>
 
@@ -1466,162 +1340,6 @@ export default function ProyectoDetailPage() {
                                 )}
                               </div>
                             </div>
-
-                            {/* BIM linking expansion panel */}
-                            {isLinking && hasBimData && (
-                              <div className="mx-3 mb-2 mt-1 border rounded-lg bg-indigo-50/30 p-3 space-y-3">
-                                <div className="flex items-center justify-between">
-                                  <h4 className="text-sm font-medium flex items-center gap-2">
-                                    <Link2 className="w-4 h-4 text-indigo-600" />
-                                    Vincular BIM a: {p.partidas?.nombre}
-                                  </h4>
-                                  {linkedGroups.length > 0 && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-7 gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                                      onClick={() => handleUnlinkBim(p.partida_id)}
-                                      disabled={linkSaving}
-                                    >
-                                      <Unlink className="w-3 h-3" />
-                                      Desvincular todo
-                                    </Button>
-                                  )}
-                                </div>
-
-                                {/* Available BIM groups */}
-                                <div>
-                                  <p className="text-[11px] text-muted-foreground mb-1.5">
-                                    Seleccionar grupos BIM ({bimGroups.length} disponibles):
-                                  </p>
-                                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
-                                    {bimGroups.map(group => {
-                                      const isLinkedHere = group.partidas.some(pp => pp.id === p.partida_id)
-                                      const otherLinks = group.partidas.filter(pp => pp.id !== p.partida_id)
-                                      const isSelected = linkSelectedGroups.has(group.key)
-                                      const paramKeys = Object.keys(group.sampleParams).filter(k => group.sampleParams[k] > 0)
-
-                                      return (
-                                        <button
-                                          key={group.key}
-                                          onClick={() => !isLinkedHere && toggleLinkGroup(group.key)}
-                                          disabled={isLinkedHere}
-                                          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md border text-left transition-colors ${
-                                            isLinkedHere
-                                              ? 'border-indigo-300 bg-indigo-100/60'
-                                              : isSelected
-                                              ? 'border-indigo-400 bg-indigo-50'
-                                              : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/30'
-                                          }`}
-                                        >
-                                          <input
-                                            type="checkbox"
-                                            checked={isSelected || isLinkedHere}
-                                            disabled={isLinkedHere}
-                                            readOnly
-                                            className="rounded border-gray-300 text-indigo-600 h-3.5 w-3.5"
-                                          />
-                                          <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-1.5">
-                                              <span className="text-[10px] text-muted-foreground">{group.categoriaEs}</span>
-                                              <span className="text-xs font-medium truncate">{group.familia}</span>
-                                              <span className="text-[10px] text-muted-foreground">/</span>
-                                              <span className="text-xs truncate">{group.tipo}</span>
-                                            </div>
-                                            <div className="flex items-center gap-2 mt-0.5">
-                                              <span className="text-[10px] text-muted-foreground">{group.elements.length} elem.</span>
-                                              {paramKeys.slice(0, 4).map(k => (
-                                                <span key={k} className="text-[9px] font-mono text-indigo-600">
-                                                  {k}={group.sampleParams[k] % 1 === 0 ? group.sampleParams[k] : group.sampleParams[k].toFixed(1)}
-                                                </span>
-                                              ))}
-                                            </div>
-                                            {otherLinks.length > 0 && (
-                                              <div className="flex flex-wrap gap-1 mt-0.5">
-                                                {otherLinks.map(ol => (
-                                                  <span key={ol.id} className="text-[9px] text-amber-700 bg-amber-50 px-1 rounded">
-                                                    + {ol.nombre}
-                                                  </span>
-                                                ))}
-                                              </div>
-                                            )}
-                                          </div>
-                                          {isLinkedHere && (
-                                            <Badge variant="outline" className="text-[9px] text-indigo-600 flex-shrink-0">Vinculado</Badge>
-                                          )}
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                </div>
-
-                                {/* Formula + Apply */}
-                                {linkSelectedGroups.size > 0 && (
-                                  <div className="space-y-2 pt-2 border-t">
-                                    {/* Clickable params from selected groups */}
-                                    {(() => {
-                                      const selectedParams: Record<string, number> = {}
-                                      for (const key of linkSelectedGroups) {
-                                        const g = bimGroups.find(gr => gr.key === key)
-                                        if (g) Object.assign(selectedParams, g.sampleParams)
-                                      }
-                                      const pKeys = Object.keys(selectedParams).filter(k => selectedParams[k] > 0).sort()
-                                      return pKeys.length > 0 ? (
-                                        <div>
-                                          <p className="text-[10px] text-muted-foreground mb-1">Parametros (click para insertar):</p>
-                                          <div className="flex flex-wrap gap-1">
-                                            {pKeys.map(k => (
-                                              <button
-                                                key={k}
-                                                onClick={() => setLinkFormula(prev => prev ? `${prev} ${k}` : k)}
-                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border text-[10px] hover:border-indigo-400 hover:bg-indigo-50 transition-colors"
-                                              >
-                                                <span className="font-mono font-medium text-indigo-700">{k}</span>
-                                                <span className="text-muted-foreground">={selectedParams[k] % 1 === 0 ? selectedParams[k] : selectedParams[k].toFixed(1)}</span>
-                                              </button>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      ) : null
-                                    })()}
-
-                                    <div className="flex items-end gap-2">
-                                      <div className="flex-1">
-                                        <label className="text-[10px] font-medium text-muted-foreground mb-0.5 block">Formula de metrado</label>
-                                        <Input
-                                          placeholder="Ej: Area * 1.05"
-                                          value={linkFormula}
-                                          onChange={e => setLinkFormula(e.target.value)}
-                                          className="h-8 text-xs font-mono"
-                                        />
-                                      </div>
-                                      {linkFormula && (() => {
-                                        const g = bimGroups.find(gr => gr.key === [...linkSelectedGroups][0])
-                                        const result = g ? testFormula(linkFormula, g.sampleParams) : null
-                                        return result ? (
-                                          <span className={`text-xs font-mono ${result.startsWith('Error') ? 'text-red-600' : 'text-green-700'}`}>
-                                            {result}
-                                          </span>
-                                        ) : null
-                                      })()}
-                                      <Button
-                                        size="sm"
-                                        className="h-8 gap-1.5 text-xs"
-                                        disabled={!linkFormula.trim() || linkSaving}
-                                        onClick={() => handleLinkBim(p.partida_id)}
-                                      >
-                                        {linkSaving ? (
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        ) : (
-                                          <Link2 className="w-3.5 h-3.5" />
-                                        )}
-                                        Vincular {linkSelectedGroups.size} grupo{linkSelectedGroups.size !== 1 ? 's' : ''}
-                                      </Button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
                           </div>
                         )
                       })}
@@ -1633,6 +1351,24 @@ export default function ProyectoDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* BIM Link Modal */}
+      {linkModalPartida && activeImportId && (() => {
+        const pp = partidas.find(p => p.partida_id === linkModalPartida)
+        return pp ? (
+          <BimLinkModal
+            open={true}
+            onClose={() => setLinkModalPartida(null)}
+            partidaId={linkModalPartida}
+            partidaNombre={pp.partidas?.nombre || 'Partida'}
+            partidaUnidad={pp.partidas?.unidad || '—'}
+            bimGroups={bimGroups}
+            activeImportId={activeImportId}
+            proyectoId={proyectoId}
+            onSaved={handleBimModalSaved}
+          />
+        ) : null
+      })()}
     </div>
   )
 }
