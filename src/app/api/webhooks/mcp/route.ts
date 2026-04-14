@@ -1300,7 +1300,8 @@ async function handleUpdateBimElements(params: Record<string, unknown>) {
 
   // Process updates and inserts
   const toInsert: Array<Record<string, unknown>> = []
-  const toUpdate: Array<{ id: string; partida_id: string | null; formula: string | null; data: Record<string, unknown> }> = []
+  const toUpdate: Array<{ id: string; data: Record<string, unknown> }> = []
+  const updatedElementIds: string[] = []
 
   for (const e of elementos) {
     if (e.unique_id) incomingUniqueIds.add(e.unique_id)
@@ -1309,13 +1310,8 @@ async function handleUpdateBimElements(params: Record<string, unknown>) {
     const existing = e.unique_id ? existingByUniqueId.get(e.unique_id) : null
 
     if (existing) {
-      // Preserve _formula from previous mapping for recalculation
-      if (existing.formula) allParams._formula = existing.formula
-
       toUpdate.push({
         id: existing.id,
-        partida_id: existing.partida_id,
-        formula: existing.formula,
         data: {
           parametros: allParams,
           familia: e.familia || null,
@@ -1325,6 +1321,7 @@ async function handleUpdateBimElements(params: Record<string, unknown>) {
           estado: existing.partida_id ? existing.estado : 'pendiente',
         },
       })
+      updatedElementIds.push(existing.id)
       if (existing.partida_id) preservedLinks++
       updated++
     } else {
@@ -1363,43 +1360,63 @@ async function handleUpdateBimElements(params: Record<string, unknown>) {
     }
   }
 
-  // ── Recalculate metrados for elements with preserved formulas ──
+  // ── Recalculate metrados from junction table mapeos ──
   let recalculated = 0
   const affectedPartidas = new Set<string>()
 
-  for (const item of toUpdate) {
-    if (!item.formula || !item.partida_id) continue
+  if (updatedElementIds.length > 0) {
+    // Load all mapeos for updated elements from junction table
+    const { data: mapeos } = await admin
+      .from('bim_elemento_mapeos')
+      .select('id, elemento_id, partida_id, formula, metrado_calculado')
+      .in('elemento_id', updatedElementIds)
 
-    // Extract numeric params from the updated parametros
-    const params = (item.data.parametros || {}) as Record<string, unknown>
-    const numericParams: Record<string, number> = {}
-    for (const [k, v] of Object.entries(params)) {
-      if (!k.startsWith('_') && typeof v === 'number') numericParams[k] = v
-    }
+    for (const mapeo of mapeos || []) {
+      if (!mapeo.formula) continue
 
-    const metrado = evaluateFormula(item.formula, numericParams)
-    if (metrado !== null) {
-      await admin.from('bim_elementos')
-        .update({ metrado_calculado: metrado })
-        .eq('id', item.id)
-      affectedPartidas.add(item.partida_id)
-      recalculated++
+      // Find the updated element's params
+      const updateItem = toUpdate.find(u => u.id === mapeo.elemento_id)
+      if (!updateItem) continue
+
+      const params = (updateItem.data.parametros || {}) as Record<string, unknown>
+      const numericParams: Record<string, number> = {}
+      for (const [k, v] of Object.entries(params)) {
+        if (!k.startsWith('_') && typeof v === 'number') numericParams[k] = v
+      }
+
+      const metrado = evaluateFormula(mapeo.formula, numericParams)
+      if (metrado !== null) {
+        await admin.from('bim_elemento_mapeos')
+          .update({ metrado_calculado: metrado })
+          .eq('id', mapeo.id)
+        affectedPartidas.add(mapeo.partida_id)
+        recalculated++
+      }
     }
   }
 
-  // Aggregate metrado_calculado per partida from ALL elements in this import
+  // Aggregate metrado per partida from junction table and update proyecto_partidas
   let partidasUpdated = 0
   if (affectedPartidas.size > 0 && importacion.proyecto_id) {
-    for (const partidaId of affectedPartidas) {
-      const { data: partidaElems } = await admin
-        .from('bim_elementos')
-        .select('metrado_calculado')
-        .eq('importacion_id', importacion_id)
-        .eq('partida_id', partidaId)
-        .neq('estado', 'eliminado')
+    // Get all element IDs in this import (non-eliminated)
+    const { data: importElems } = await admin
+      .from('bim_elementos')
+      .select('id')
+      .eq('importacion_id', importacion_id)
+      .neq('estado', 'eliminado')
 
-      const totalMetrado = (partidaElems || [])
-        .reduce((sum, el) => sum + (Number(el.metrado_calculado) || 0), 0)
+    const allElemIds = (importElems || []).map(e => e.id)
+
+    for (const partidaId of affectedPartidas) {
+      // Sum all mapeos for this partida across all elements in the import
+      const { data: partidaMapeos } = await admin
+        .from('bim_elemento_mapeos')
+        .select('metrado_calculado')
+        .in('elemento_id', allElemIds)
+        .eq('partida_id', partidaId)
+
+      const totalMetrado = (partidaMapeos || [])
+        .reduce((sum, m) => sum + (Number(m.metrado_calculado) || 0), 0)
 
       const { error: ppErr } = await admin.from('proyecto_partidas')
         .update({ metrado_bim: Math.round(totalMetrado * 10000) / 10000 })

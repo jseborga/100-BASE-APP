@@ -49,6 +49,32 @@ export async function GET(
 
     if (elemErr) throw new Error(elemErr.message)
 
+    // Load mapeos from junction table for all elements in this import
+    const elementIds = (rawElements || []).map((el: Record<string, unknown>) => el.id as string)
+    let mapeosByElemento = new Map<string, Array<{
+      id: string; partida_id: string; formula: string | null; metrado_calculado: number | null;
+      partidas: { id: string; nombre: string; unidad: string; capitulo: string | null } | null
+    }>>()
+
+    if (elementIds.length > 0) {
+      const { data: allMapeos } = await admin
+        .from('bim_elemento_mapeos')
+        .select('id, elemento_id, partida_id, formula, metrado_calculado, partidas(id, nombre, unidad, capitulo)')
+        .in('elemento_id', elementIds)
+
+      for (const m of allMapeos || []) {
+        const eid = m.elemento_id as string
+        if (!mapeosByElemento.has(eid)) mapeosByElemento.set(eid, [])
+        mapeosByElemento.get(eid)!.push({
+          id: m.id,
+          partida_id: m.partida_id,
+          formula: m.formula,
+          metrado_calculado: m.metrado_calculado,
+          partidas: Array.isArray(m.partidas) ? m.partidas[0] || null : m.partidas as { id: string; nombre: string; unidad: string; capitulo: string | null } | null,
+        })
+      }
+    }
+
     // Extract metadata/notas from JSONB parametros → clean structure
     const elements = (rawElements || []).map((el: Record<string, unknown>) => {
       const raw = (el.parametros || {}) as Record<string, unknown>
@@ -79,6 +105,7 @@ export async function GET(
         metadata: Object.keys(metadata).length > 0 ? metadata : null,
         notas_ia: Object.keys(notas_ia).length > 0 ? notas_ia : null,
         nota_familia,
+        mapeos: mapeosByElemento.get(el.id as string) || [],
       }
     })
 
@@ -189,29 +216,60 @@ export async function PATCH(
     }
 
     // --- Reset a group of elements back to pendiente ---
+    // If partida_id is provided, only removes that specific mapping (1:N support)
+    // Otherwise removes ALL mappings for the group
     if (action === 'reset_group') {
-      const { importacion_id, revit_categoria_id, familia, tipo } = body
+      const { importacion_id, revit_categoria_id, familia, tipo, partida_id: resetPartidaId } = body
       if (!importacion_id) {
         return NextResponse.json({ error: 'importacion_id requerido' }, { status: 400 })
       }
 
-      let query = admin
+      // Find matching elements
+      let elemQuery = admin
         .from('bim_elementos')
-        .update({
-          partida_id: null,
-          metrado_calculado: null,
-          estado: 'pendiente',
-        })
+        .select('id')
         .eq('importacion_id', importacion_id)
 
-      if (revit_categoria_id) query = query.eq('revit_categoria_id', revit_categoria_id)
-      if (familia) query = query.eq('familia', familia)
-      if (tipo) query = query.eq('tipo', tipo)
+      if (revit_categoria_id) elemQuery = elemQuery.eq('revit_categoria_id', revit_categoria_id)
+      if (familia) elemQuery = elemQuery.eq('familia', familia)
+      if (tipo) elemQuery = elemQuery.eq('tipo', tipo)
 
-      const { error, count } = await query.select('id')
-      if (error) throw new Error(error.message)
+      const { data: matchedElems } = await elemQuery
+      const elemIds = (matchedElems || []).map(e => e.id)
 
-      return NextResponse.json({ reset: count || 0, message: `${count || 0} elementos liberados` })
+      if (elemIds.length > 0) {
+        if (resetPartidaId) {
+          // Remove only the specific partida mapping
+          await admin
+            .from('bim_elemento_mapeos')
+            .delete()
+            .in('elemento_id', elemIds)
+            .eq('partida_id', resetPartidaId)
+        } else {
+          // Remove ALL mapeos for these elements
+          await admin
+            .from('bim_elemento_mapeos')
+            .delete()
+            .in('elemento_id', elemIds)
+        }
+
+        // Check remaining mapeos — only reset estado if element has no mapeos left
+        for (const eid of elemIds) {
+          const { count } = await admin
+            .from('bim_elemento_mapeos')
+            .select('id', { count: 'exact', head: true })
+            .eq('elemento_id', eid)
+
+          if (!count || count === 0) {
+            await admin
+              .from('bim_elementos')
+              .update({ partida_id: null, metrado_calculado: null, estado: 'pendiente' })
+              .eq('id', eid)
+          }
+        }
+      }
+
+      return NextResponse.json({ reset: elemIds.length, message: `${elemIds.length} elementos procesados` })
     }
 
     // --- Reset ALL elements in an import ---
@@ -219,6 +277,19 @@ export async function PATCH(
       const { importacion_id } = body
       if (!importacion_id) {
         return NextResponse.json({ error: 'importacion_id requerido' }, { status: 400 })
+      }
+
+      // Delete all mapeos for elements in this import
+      const { data: importElems } = await admin
+        .from('bim_elementos')
+        .select('id')
+        .eq('importacion_id', importacion_id)
+
+      if (importElems && importElems.length > 0) {
+        await admin
+          .from('bim_elemento_mapeos')
+          .delete()
+          .in('elemento_id', importElems.map(e => e.id))
       }
 
       const { error, count } = await admin
@@ -326,25 +397,43 @@ export async function PUT(
       const metrado = evaluateFormula(formula, numericParams)
 
       if (metrado !== null) {
-        // Save _formula in parametros for recalculation on re-export updates
-        const updatedParams = { ...rawParams, _formula: formula }
-        const { error: updateErr } = await admin
-          .from('bim_elementos')
-          .update({
-            partida_id: partida_id,
-            metrado_calculado: Math.round(metrado * 10000) / 10000,
-            estado: 'mapeado',
-            parametros: updatedParams,
-          })
-          .eq('id', el.id)
+        const roundedMetrado = Math.round(metrado * 10000) / 10000
 
-        if (updateErr) errors++
-        else mapped++
-      } else {
+        // Upsert into junction table (allows multiple partidas per element)
+        const { error: mapeoErr } = await admin
+          .from('bim_elemento_mapeos')
+          .upsert({
+            elemento_id: el.id,
+            partida_id: partida_id,
+            formula: formula,
+            metrado_calculado: roundedMetrado,
+          }, { onConflict: 'elemento_id,partida_id' })
+
+        if (mapeoErr) {
+          errors++
+          continue
+        }
+
+        // Update element estado to mapeado (keep partida_id for backward compat)
         await admin
           .from('bim_elementos')
-          .update({ estado: 'sin_match' })
+          .update({ estado: 'mapeado' })
           .eq('id', el.id)
+
+        mapped++
+      } else {
+        // Only mark sin_match if element has no other mapeos
+        const { count } = await admin
+          .from('bim_elemento_mapeos')
+          .select('id', { count: 'exact', head: true })
+          .eq('elemento_id', el.id)
+
+        if (!count || count === 0) {
+          await admin
+            .from('bim_elementos')
+            .update({ estado: 'sin_match' })
+            .eq('id', el.id)
+        }
         errors++
       }
     }

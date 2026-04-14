@@ -70,6 +70,14 @@ interface BimImport {
   created_at: string
 }
 
+interface BimMapeo {
+  id: string
+  partida_id: string
+  formula: string | null
+  metrado_calculado: number | null
+  partidas: { id: string; nombre: string; unidad: string; capitulo: string | null } | null
+}
+
 interface BimElement {
   id: string
   revit_id: string
@@ -84,6 +92,7 @@ interface BimElement {
   partida_id: string | null
   revit_categorias: { id: string; nombre: string; nombre_es: string } | null
   partidas: { id: string; nombre: string; unidad: string; capitulo: string | null } | null
+  mapeos: BimMapeo[]
 }
 
 // A group = elements with same categoria + familia + tipo
@@ -100,7 +109,8 @@ interface BimGroup {
   notasIA: Record<string, string>
   notaFamilia: string | null
   estado: string // dominant estado in the group
-  partida: { id: string; nombre: string; unidad: string } | null
+  partida: { id: string; nombre: string; unidad: string } | null // legacy compat
+  partidas: Array<{ id: string; nombre: string; unidad: string; formula: string | null; metradoTotal: number }> // all mapped partidas
   metradoTotal: number
   suggestions: SuggestedMapeo[] // suggested formulas from revit_mapeos
 }
@@ -309,20 +319,19 @@ export default function ProyectoDetailPage() {
     if (!activeImportId) return
     setLinkSaving(true)
     try {
-      // Find all BIM elements mapped to this partida and reset them
-      const elementsForPartida = (bimData?.elements || []).filter(
-        e => e.partida_id === partidaId && (e.estado === 'mapeado' || e.estado === 'confirmado')
-      )
-      if (elementsForPartida.length === 0) return
-      for (const el of elementsForPartida) {
+      // Find groups linked to this partida — use reset_group with partida_id to remove specific mapping
+      const linkedGroups = getLinkedGroups(partidaId)
+      for (const group of linkedGroups) {
         await fetch(`/api/proyectos/${proyectoId}/bim`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            elemento_id: el.id,
-            partida_id: null,
-            metrado_override: null,
-            estado: 'pendiente',
+            action: 'reset_group',
+            importacion_id: activeImportId,
+            revit_categoria_id: group.categoriaId,
+            familia: group.familia,
+            tipo: group.tipo,
+            partida_id: partidaId, // only remove THIS partida mapping
           }),
         })
       }
@@ -338,7 +347,7 @@ export default function ProyectoDetailPage() {
   // Get BIM groups linked to a specific partida
   const getLinkedGroups = (partidaId: string): BimGroup[] => {
     return bimGroups.filter(g =>
-      g.elements.some(e => e.partida_id === partidaId)
+      g.partidas.some(p => p.id === partidaId)
     )
   }
 
@@ -400,6 +409,26 @@ export default function ProyectoDetailPage() {
       const catId = first.revit_categorias?.id
       const suggestions = catId ? sugMapeos.filter(m => m.revit_categoria_id === catId) : []
 
+      // Collect all unique partida mappings from junction table mapeos
+      const partidaMap = new Map<string, { id: string; nombre: string; unidad: string; formula: string | null; metradoTotal: number }>()
+      for (const el of elements) {
+        for (const m of el.mapeos || []) {
+          if (!m.partidas) continue
+          const existing = partidaMap.get(m.partida_id)
+          if (existing) {
+            existing.metradoTotal += m.metrado_calculado || 0
+          } else {
+            partidaMap.set(m.partida_id, {
+              id: m.partidas.id,
+              nombre: m.partidas.nombre,
+              unidad: m.partidas.unidad,
+              formula: m.formula,
+              metradoTotal: m.metrado_calculado || 0,
+            })
+          }
+        }
+      }
+
       return {
         key,
         categoria: first.revit_categorias?.nombre || 'Unknown',
@@ -414,6 +443,7 @@ export default function ProyectoDetailPage() {
         notaFamilia: notaFam,
         estado: dominantEstado,
         partida: first.partidas ? { id: first.partidas.id, nombre: first.partidas.nombre, unidad: first.partidas.unidad } : null,
+        partidas: Array.from(partidaMap.values()),
         metradoTotal,
         suggestions,
       }
@@ -1302,7 +1332,10 @@ export default function ProyectoDetailPage() {
                                 )}
                                 {linkedGroups.length > 0 && (
                                   <p className="text-[10px] text-indigo-600 truncate">
-                                    {linkedGroups.map(g => `${g.familia}/${g.tipo}`).join(', ')}
+                                    {linkedGroups.map(g => {
+                                      const mapeo = g.partidas.find(pp => pp.id === p.partida_id)
+                                      return `${g.familia}/${g.tipo}${mapeo?.formula ? ` [${mapeo.formula}]` : ''}`
+                                    }).join(', ')}
                                   </p>
                                 )}
                               </div>
@@ -1459,34 +1492,32 @@ export default function ProyectoDetailPage() {
                                 {/* Available BIM groups */}
                                 <div>
                                   <p className="text-[11px] text-muted-foreground mb-1.5">
-                                    Seleccionar grupos BIM ({bimGroups.filter(g => g.estado === 'pendiente' || g.estado === 'sin_match').length} disponibles):
+                                    Seleccionar grupos BIM ({bimGroups.length} disponibles):
                                   </p>
                                   <div className="space-y-1 max-h-[200px] overflow-y-auto">
                                     {bimGroups.map(group => {
-                                      const isLinkedHere = group.elements.some(e => e.partida_id === p.partida_id)
-                                      const isLinkedElsewhere = !isLinkedHere && group.partida !== null
+                                      const isLinkedHere = group.partidas.some(pp => pp.id === p.partida_id)
+                                      const otherLinks = group.partidas.filter(pp => pp.id !== p.partida_id)
                                       const isSelected = linkSelectedGroups.has(group.key)
                                       const paramKeys = Object.keys(group.sampleParams).filter(k => group.sampleParams[k] > 0)
 
                                       return (
                                         <button
                                           key={group.key}
-                                          onClick={() => !isLinkedElsewhere && toggleLinkGroup(group.key)}
-                                          disabled={isLinkedElsewhere}
+                                          onClick={() => !isLinkedHere && toggleLinkGroup(group.key)}
+                                          disabled={isLinkedHere}
                                           className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md border text-left transition-colors ${
                                             isLinkedHere
                                               ? 'border-indigo-300 bg-indigo-100/60'
                                               : isSelected
                                               ? 'border-indigo-400 bg-indigo-50'
-                                              : isLinkedElsewhere
-                                              ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
                                               : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/30'
                                           }`}
                                         >
                                           <input
                                             type="checkbox"
                                             checked={isSelected || isLinkedHere}
-                                            disabled={isLinkedElsewhere || isLinkedHere}
+                                            disabled={isLinkedHere}
                                             readOnly
                                             className="rounded border-gray-300 text-indigo-600 h-3.5 w-3.5"
                                           />
@@ -1505,14 +1536,18 @@ export default function ProyectoDetailPage() {
                                                 </span>
                                               ))}
                                             </div>
+                                            {otherLinks.length > 0 && (
+                                              <div className="flex flex-wrap gap-1 mt-0.5">
+                                                {otherLinks.map(ol => (
+                                                  <span key={ol.id} className="text-[9px] text-amber-700 bg-amber-50 px-1 rounded">
+                                                    + {ol.nombre}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
                                           </div>
                                           {isLinkedHere && (
                                             <Badge variant="outline" className="text-[9px] text-indigo-600 flex-shrink-0">Vinculado</Badge>
-                                          )}
-                                          {isLinkedElsewhere && group.partida && (
-                                            <span className="text-[9px] text-muted-foreground flex-shrink-0 truncate max-w-[120px]">
-                                              → {group.partida.nombre}
-                                            </span>
                                           )}
                                         </button>
                                       )
