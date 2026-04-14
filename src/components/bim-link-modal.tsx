@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, Plus, Trash2, Pencil, Check, X, Calculator } from 'lucide-react'
+import { Loader2, Plus, Trash2, Check, X, Calculator, Search, ChevronRight, ChevronDown } from 'lucide-react'
 
 // ── Types ──
 
@@ -62,7 +62,7 @@ interface BimGroup {
 interface MapeoLine {
   groupKey: string
   formula: string
-  isExisting: boolean // true = already saved in DB
+  isExisting: boolean
   resultado: number | null
 }
 
@@ -119,9 +119,15 @@ export default function BimLinkModal({
   const [lines, setLines] = useState<MapeoLine[]>([])
   const [saving, setSaving] = useState(false)
   const [addingGroup, setAddingGroup] = useState(false)
+  const [groupSearch, setGroupSearch] = useState('')
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
+  const initialized = useRef(false)
 
-  // Initialize lines from existing mapeos when modal opens
-  const initLines = useCallback(() => {
+  // Initialize lines from existing mapeos on mount
+  useEffect(() => {
+    if (!open || initialized.current) return
+    initialized.current = true
+
     const existing: MapeoLine[] = []
     for (const group of bimGroups) {
       const mapeo = group.partidas.find(p => p.id === partidaId)
@@ -136,27 +142,62 @@ export default function BimLinkModal({
       }
     }
     setLines(existing)
-    setAddingGroup(existing.length === 0) // auto-open add if no existing
-  }, [bimGroups, partidaId])
+    setAddingGroup(existing.length === 0)
+  }, [open, bimGroups, partidaId])
 
-  // Re-initialize when modal opens
-  const handleOpenChange = (isOpen: boolean) => {
-    if (isOpen) initLines()
-    else onClose()
-  }
-
-  // Available groups (not already in lines)
+  // Available groups (not already in lines), filtered by search
   const availableGroups = useMemo(() => {
     const usedKeys = new Set(lines.map(l => l.groupKey))
-    return bimGroups.filter(g => !usedKeys.has(g.key))
-  }, [bimGroups, lines])
+    let filtered = bimGroups.filter(g => !usedKeys.has(g.key))
+
+    if (groupSearch.trim()) {
+      const q = groupSearch.toLowerCase()
+      filtered = filtered.filter(g =>
+        g.familia.toLowerCase().includes(q) ||
+        g.tipo.toLowerCase().includes(q) ||
+        g.categoriaEs.toLowerCase().includes(q) ||
+        g.categoria.toLowerCase().includes(q)
+      )
+    }
+    return filtered
+  }, [bimGroups, lines, groupSearch])
+
+  // Group available groups by category
+  const groupedByCategory = useMemo(() => {
+    const map = new Map<string, BimGroup[]>()
+    for (const g of availableGroups) {
+      const cat = g.categoriaEs || g.categoria
+      if (!map.has(cat)) map.set(cat, [])
+      map.get(cat)!.push(g)
+    }
+    return map
+  }, [availableGroups])
+
+  const toggleCategory = (cat: string) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(cat)) next.delete(cat)
+      else next.add(cat)
+      return next
+    })
+  }
 
   // Add a new line
   const addLine = (groupKey: string) => {
     const group = bimGroups.find(g => g.key === groupKey)
     if (!group) return
     setLines(prev => [...prev, { groupKey, formula: '', isExisting: false, resultado: null }])
-    setAddingGroup(false)
+  }
+
+  // Add all groups from a category at once
+  const addCategory = (groups: BimGroup[]) => {
+    const newLines: MapeoLine[] = groups.map(g => ({
+      groupKey: g.key,
+      formula: '',
+      isExisting: false,
+      resultado: null,
+    }))
+    setLines(prev => [...prev, ...newLines])
   }
 
   // Update formula for a line
@@ -178,7 +219,7 @@ export default function BimLinkModal({
     setLines(prev => prev.filter((_, i) => i !== index))
   }
 
-  // Insert param name into formula at cursor (appends)
+  // Insert param name into formula
   const insertParam = (index: number, paramName: string) => {
     setLines(prev => {
       const next = [...prev]
@@ -212,7 +253,6 @@ export default function BimLinkModal({
       for (const group of bimGroups) {
         const hadMapeo = group.partidas.some(p => p.id === partidaId)
         if (hadMapeo && !currentGroupKeys.has(group.key)) {
-          // This group was unlinked — remove the specific mapping
           await fetch(`/api/proyectos/${proyectoId}/bim`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -272,7 +312,6 @@ export default function BimLinkModal({
       })
 
       onSaved()
-      onClose()
     } catch (err) {
       console.error('Save BIM link error:', err)
     } finally {
@@ -281,7 +320,7 @@ export default function BimLinkModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={isOpen => { if (!isOpen) onClose() }}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
@@ -289,7 +328,7 @@ export default function BimLinkModal({
             Vincular BIM: {partidaNombre}
           </DialogTitle>
           <DialogDescription className="text-xs">
-            Seleccione grupos BIM y defina fórmulas individuales. Cada grupo puede tener su propia fórmula de metrado.
+            Cada grupo BIM puede tener su propia fórmula. Use los chips de parámetros para armar fórmulas.
           </DialogDescription>
         </DialogHeader>
 
@@ -304,7 +343,7 @@ export default function BimLinkModal({
               <div key={`${line.groupKey}-${idx}`} className="border rounded-lg p-3 space-y-2 bg-white">
                 {/* Group header */}
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     <span className="text-[10px] text-muted-foreground bg-gray-100 px-1.5 py-0.5 rounded">
                       {group.categoriaEs}
                     </span>
@@ -314,6 +353,9 @@ export default function BimLinkModal({
                     <Badge variant="secondary" className="text-[9px]">
                       {group.elements.length} elem.
                     </Badge>
+                    {line.isExisting && (
+                      <Badge variant="outline" className="text-[9px] text-indigo-600">guardado</Badge>
+                    )}
                   </div>
                   <Button
                     variant="ghost"
@@ -351,7 +393,7 @@ export default function BimLinkModal({
                       className="h-8 text-xs font-mono"
                     />
                   </div>
-                  <div className="w-28 text-right">
+                  <div className="w-32 text-right flex-shrink-0">
                     {line.formula.trim() && (
                       <span className={`text-xs font-mono ${line.resultado !== null ? 'text-green-700' : 'text-red-600'}`}>
                         {line.resultado !== null
@@ -361,10 +403,6 @@ export default function BimLinkModal({
                     )}
                   </div>
                 </div>
-
-                {line.isExisting && (
-                  <span className="text-[9px] text-muted-foreground">Mapeo existente — editar la fórmula para recalcular</span>
-                )}
               </div>
             )
           })}
@@ -372,56 +410,103 @@ export default function BimLinkModal({
           {/* Add group section */}
           {addingGroup ? (
             <div className="border border-dashed rounded-lg p-3 space-y-2 bg-gray-50/50">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-muted-foreground">Seleccionar grupo BIM:</p>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex-1 relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar por familia, tipo o categoría..."
+                    value={groupSearch}
+                    onChange={e => setGroupSearch(e.target.value)}
+                    className="h-8 text-xs pl-8"
+                    autoFocus
+                  />
+                </div>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setAddingGroup(false)}
+                  className="h-8 w-8 flex-shrink-0"
+                  onClick={() => { setAddingGroup(false); setGroupSearch('') }}
                 >
                   <X className="w-3.5 h-3.5" />
                 </Button>
               </div>
-              <div className="space-y-1 max-h-[200px] overflow-y-auto">
+
+              <div className="max-h-[280px] overflow-y-auto space-y-1">
                 {availableGroups.length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-2 text-center">Todos los grupos ya están vinculados</p>
+                  <p className="text-xs text-muted-foreground py-3 text-center">
+                    {groupSearch ? 'Sin resultados' : 'Todos los grupos ya están vinculados'}
+                  </p>
                 ) : (
-                  availableGroups.map(group => {
-                    const paramKeys = Object.keys(group.sampleParams).filter(k => group.sampleParams[k] > 0)
+                  Array.from(groupedByCategory.entries()).map(([cat, groups]) => {
+                    const isCollapsed = collapsedCategories.has(cat)
                     return (
-                      <button
-                        key={group.key}
-                        onClick={() => addLine(group.key)}
-                        className="w-full flex items-center gap-2 px-2.5 py-2 rounded-md border border-gray-200 bg-white text-left hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors"
-                      >
-                        <Plus className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] text-muted-foreground">{group.categoriaEs}</span>
-                            <span className="text-xs font-medium truncate">{group.familia}</span>
-                            <span className="text-[10px] text-muted-foreground">/</span>
-                            <span className="text-xs truncate">{group.tipo}</span>
+                      <div key={cat}>
+                        {/* Category header */}
+                        <button
+                          onClick={() => toggleCategory(cat)}
+                          className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-100 transition-colors"
+                        >
+                          {isCollapsed
+                            ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                            : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                          }
+                          <span className="text-xs font-semibold text-muted-foreground">{cat}</span>
+                          <Badge variant="secondary" className="text-[9px] ml-auto">{groups.length}</Badge>
+                          {/* Add all button */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1.5 text-[9px] text-indigo-600 hover:text-indigo-800 ml-1"
+                            onClick={e => { e.stopPropagation(); addCategory(groups) }}
+                            title={`Agregar todos (${groups.length})`}
+                          >
+                            <Plus className="w-3 h-3 mr-0.5" />
+                            todos
+                          </Button>
+                        </button>
+
+                        {/* Category items */}
+                        {!isCollapsed && (
+                          <div className="ml-5 space-y-0.5">
+                            {groups.map(group => {
+                              const paramKeys = Object.keys(group.sampleParams).filter(k => group.sampleParams[k] > 0)
+                              return (
+                                <button
+                                  key={group.key}
+                                  onClick={() => addLine(group.key)}
+                                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-transparent text-left hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors"
+                                >
+                                  <Plus className="w-3 h-3 text-indigo-600 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-xs font-medium truncate">{group.familia}</span>
+                                      <span className="text-[10px] text-muted-foreground">/</span>
+                                      <span className="text-xs truncate">{group.tipo}</span>
+                                      <span className="text-[10px] text-muted-foreground ml-auto flex-shrink-0">{group.elements.length} elem.</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                      {paramKeys.slice(0, 5).map(k => (
+                                        <span key={k} className="text-[9px] font-mono text-indigo-600">
+                                          {k}={group.sampleParams[k] % 1 === 0 ? group.sampleParams[k] : group.sampleParams[k].toFixed(1)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                    {group.partidas.length > 0 && (
+                                      <div className="flex flex-wrap gap-1 mt-0.5">
+                                        {group.partidas.map(pp => (
+                                          <span key={pp.id} className="text-[9px] text-amber-700 bg-amber-50 px-1 rounded">
+                                            {pp.nombre}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </button>
+                              )
+                            })}
                           </div>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-[10px] text-muted-foreground">{group.elements.length} elem.</span>
-                            {paramKeys.slice(0, 4).map(k => (
-                              <span key={k} className="text-[9px] font-mono text-indigo-600">
-                                {k}={group.sampleParams[k] % 1 === 0 ? group.sampleParams[k] : group.sampleParams[k].toFixed(1)}
-                              </span>
-                            ))}
-                          </div>
-                          {group.partidas.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              {group.partidas.map(pp => (
-                                <span key={pp.id} className="text-[9px] text-amber-700 bg-amber-50 px-1 rounded">
-                                  {pp.nombre}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </button>
+                        )}
+                      </div>
                     )
                   })
                 )}
